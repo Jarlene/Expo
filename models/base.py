@@ -70,7 +70,7 @@ class Base(LightningModule):
                          sync_dist=True, logger=True)
         else:
             for m in self.metrics:
-                res = m(logists.logits, inputs['labels'])
+                res = m(**logists, **inputs)
                 self.log(name=stage + '_' + m.__class__.__name__, value=res,
                          sync_dist=True, logger=True)
 

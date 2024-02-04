@@ -15,7 +15,7 @@ num_proc=8
 model_name=$1
 pretrained_model="${model_dir}/${model_name}"
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python model_pl_sft.py \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc_per_node=8 model_pl_sft.py \
     --model_name_or_path $pretrained_model \
     --data_dir $dataset_dir \
     --batch_size 4 \

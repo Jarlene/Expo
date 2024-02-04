@@ -11,8 +11,7 @@ from typing import List, Dict, Any
 from datasets import load_from_disk
 from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollator, BitsAndBytesConfig
 
-from peft import MoELoraConfig, PeftModel, get_peft_model
-
+from peft import MoVConfig, MoELoraConfig, get_peft_model
 torch.set_float32_matmul_precision('medium')
 # os.environ["TOKENIZERS_PARALLELISM"] = "false"
 

@@ -31,12 +31,141 @@ class TreeFunction(torch.autograd.Function):
         output_logits_dim, depth, smooth_step_param = ctx.output_logits_dim, ctx.depth, ctx.smooth_step_param
         result = trees_layer.backward(grad_outputs[0], input_features, node_weights, leaf_weights,
                                       output_logits_dim, depth, smooth_step_param)
-        return result
+        return result[0], result[1], result[2], None, None, None, None
+
+
+class ParallelLinear(torch.autograd.Function):
+    """
+    A custom autograd function for Parallel Linear operation.
+    """
+
+    @staticmethod
+    @custom_fwd
+    def forward(ctx, input, expert_size_list, weight, bias=None):
+        """
+        Forward pass of the ParallelLinear operation.
+
+        Args:
+            ctx: Context object.
+            input (Tensor): Input tensor.
+            expert_size_list (List[int]): List of expert sizes.
+            weight (Tensor): Weight tensor.
+            bias (Optional[Tensor]): Bias tensor.
+
+        Returns:
+            Tensor: Output tensor.
+        """
+        # expert_size_list: List[int] = expert_size.tolist()
+        output = ParallelLinear.forward_scriptable(
+            input, expert_size_list, weight, bias)
+        # assert torch.allclose(ParallelLinear._forward_scriptable(input, expert_size, weight, bias),  output)
+        ctx.save_for_backward(input, weight, bias)
+        ctx.expert_size_list = expert_size_list
+        return output
+
+    @staticmethod
+    @torch.jit.script
+    def forward_scriptable(input: torch.Tensor, expert_size_list: List[int],
+                           weight: torch.Tensor, bias: Optional[torch.Tensor]):
+        """
+        Scriptable forward pass of the ParallelLinear operation.
+
+        Args:
+            input (Tensor): Input tensor.
+            expert_size_list (List[int]): List of expert sizes.
+            weight (Tensor): Weight tensor.
+            bias (Optional[Tensor]): Bias tensor.
+
+        Returns:
+            Tensor: Output tensor.
+        """
+        output_buf = torch.empty((input.size(0), weight.size(2)),
+                                 device=input.device, dtype=input.dtype)
+        num_linears = weight.size(0)
+
+        input_list = input.split(expert_size_list, dim=0)
+        output_buf_list = output_buf.split(expert_size_list)
+
+        for i in range(num_linears):
+            torch.mm(input_list[i], weight[i], out=output_buf_list[i])
+
+        if bias is not None:
+            for i in range(num_linears):
+                output_buf_list[i].add_(bias[i])
+
+        output = output_buf
+        return output
+
+    @staticmethod
+    @custom_bwd
+    def backward(ctx, grad_out):
+        """
+        Backward pass of the ParallelLinear operation.
+
+        Args:
+            ctx: Context object.
+            grad_out (Tensor): Gradient of the output.
+
+        Returns:
+            Tuple of Tensors: Gradients with respect to input, weight, and bias.
+        """
+        input, weight, bias = ctx.saved_tensors
+        expert_size_list = ctx.expert_size_list
+        return ParallelLinear.backward_scriptable(
+            grad_out, input, expert_size_list,
+            weight, bias
+        )
+
+    @staticmethod
+    @torch.jit.script
+    def backward_scriptable(grad_out: torch.Tensor,
+                            input: torch.Tensor, expert_size_list: List[int],
+                            weight: torch.Tensor, bias: Optional[torch.Tensor]):
+        """
+        Scriptable backward pass of the ParallelLinear operation.
+
+        Args:
+            grad_out (Tensor): Gradient of the output.
+            input (Tensor): Input tensor.
+            expert_size_list (List[int]): List of expert sizes.
+            weight (Tensor): Weight tensor.
+            bias (Optional[Tensor]): Bias tensor.
+
+        Returns:
+            Tuple of Tensors: Gradients with respect to input, weight, and bias.
+        """
+        num_linears = weight.size(0)
+        input_list = input.t().split(expert_size_list, dim=1)
+        grad_list = grad_out.split(expert_size_list, dim=0)
+
+        d_input_buf = torch.empty_like(input)
+        d_input_buf_list = d_input_buf.split(expert_size_list, dim=0)
+        d_weight_buf = torch.empty_like(weight)
+
+        weight_t = weight.permute(0, 2, 1)
+
+        for i in range(num_linears):
+            torch.mm(grad_list[i], weight_t[i], out=d_input_buf_list[i])
+            torch.mm(input_list[i], grad_list[i], out=d_weight_buf[i])
+
+        d_input = d_input_buf
+        d_weight = d_weight_buf
+
+        if bias is not None:
+            d_bias_buf = torch.empty_like(bias)
+            for i in range(num_linears):
+                torch.sum(grad_list[i], dim=0,
+                          keepdim=False, out=d_bias_buf[i])
+            d_bias = d_bias_buf
+        else:
+            d_bias = None
+
+        return d_input, None, d_weight, d_bias
 
 
 class TreesLayer(torch.nn.Module):
     def __init__(self, input_dim, output_logits_dim, smooth_step_param=1.0, trees_num=1, depth=3, sum_outputs=True):
-        super(TreesLayer, self).__init__()
+        super().__init__()
         self.output_logits_dim = output_logits_dim
         self.depth = depth
         self.sum_outputs = sum_outputs
