@@ -51,7 +51,7 @@ class PLTrainer(Trainer):
         seed_worker()
         self.args = args
         self.resume = args.resume
-        self.training_model = Base(model, args)
+        self.training_model = Base(model=model, tokenizer=tokenizer, args=args)
         self.tokenizer = tokenizer
         if example_input_array is None:
             example_input_array = collate_fn(
@@ -96,8 +96,6 @@ class PLTrainer(Trainer):
 
     def save_pretrained(self):
         self.training_model.save_pretrained(self.args.output_dir + "/result")
-        if self.tokenizer is not None:
-            self.tokenizer.save_pretrained(self.args.output_dir + "/result")
 
     def to_torchscript(self, ckpt_path):
         ckpt_path = self._checkpoint_connector._select_ckpt_path(

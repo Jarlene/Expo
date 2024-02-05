@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from transformers import PreTrainedModel
+from transformers import PreTrainedModel, AutoTokenizer
 from peft.peft_model import PeftModel
 from lightning.pytorch.core import LightningModule
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
@@ -18,16 +18,21 @@ class Base(LightningModule):
 
     def __init__(self,
                  model: Union[nn.Module, PreTrainedModel, PeftModel],
+                 tokenizer: AutoTokenizer,
                  args: TrainArguments,
                  metrics: Optional[Union[Metric, List[Metric]]] = None, **kwargs) -> None:
         super(Base, self).__init__(**kwargs)
         self.save_hyperparameters(args.__dict__)
         self.model = model
+        self.tokenizer = tokenizer
         self.args = args
         self.metrics = []
         self.hf_model = isinstance(
             model, PreTrainedModel) or isinstance(model, PeftModel)
         self.register_metrics(metrics)
+        self.__jit_unused_properties__.append("tokenizer")
+        self.__jit_unused_properties__.append("metrics")
+        self.__jit_unused_properties__.append("args")
 
     def register_metrics(self, metrics: Optional[Union[Metric, List[Metric]]] = None):
         if metrics is None:
@@ -109,7 +114,6 @@ class Base(LightningModule):
         return loss
 
     def on_train_epoch_end(self):
-
         self.reset_metric()
 
     def on_validation_epoch_end(self):
@@ -143,6 +147,8 @@ class Base(LightningModule):
     def save_pretrained(self, path):
         if self.hf_model:
             self.model.save_pretrained(path)
+            if self.tokenizer:
+                self.tokenizer.save_pretrained(path)
 
 
 class ValueHead(nn.Module):
@@ -171,80 +177,3 @@ class ValueHead(nn.Module):
         hidden_states = hidden_states.detach().to(torch.float32)
         output = self.summary(hidden_states)
         return output
-
-
-class UnpairedPreferenceModel(Base):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, **kwargs)
-        self.reference_model = reference_model
-        self.v_head = ValueHead(args.hidden_size)
-        self.ref_hf_model = reference_model and isinstance(
-            reference_model, PreTrainedModel)
-
-    def forward(self, *args, **kwargs):
-        policy_ouput = self.model(*args, **kwargs)
-        if self.hf_model:
-            value = self.v_head(policy_ouput.hidden_states)
-            policy_logist = policy_ouput.logits
-        if self.reference_model:
-            ref_ouput = self.reference_model(*args, **kwargs)
-            ref_logist = ref_ouput.logits
-
-
-class PairedPreferenceModel(Base):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, **kwargs)
-        self.reference_model = reference_model
-        self.v_head = ValueHead(args.hidden_size)
-        self.ref_hf_model = reference_model and isinstance(
-            reference_model, PreTrainedModel)
-
-    def forward(self, *args, **kwargs):
-        input_args = inspect.getfullargspec(self.model.forward).args
-        input_args = list(filter(lambda x: x != 'self', input_args))
-
-
-class DpoModel(PairedPreferenceModel):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, reference_model, **kwargs)
-
-
-class CDDpoModel(PairedPreferenceModel):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, reference_model, **kwargs)
-
-
-class SLiCModel(UnpairedPreferenceModel):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, reference_model, **kwargs)
-
-
-class KTOModel(UnpairedPreferenceModel):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, reference_model, **kwargs)
-
-
-class PPOModel(PairedPreferenceModel):
-    def __init__(self,
-                 model: Union[nn.Module, PreTrainedModel, PeftModel],
-                 args: TrainArguments,
-                 reference_model: Optional[Union[nn.Module, PreTrainedModel]] = None, **kwargs) -> None:
-        super().__init__(model, args, reference_model, **kwargs)
