@@ -2,7 +2,8 @@ from typing import Union, Any, Optional, Dict, List
 import numpy as np
 import torch
 import torch.nn as nn
-from models.alignment.unpaired import UnpairedPreferenceModel, PairedPreferenceModel
+from models.alignment.unpaired import UnpairedPreferenceModel
+from models.alignment.paired import PairedPreferenceModel
 from transformers import PreTrainedModel, AutoTokenizer
 from peft.peft_model import PeftModel
 from utils.utils import TrainArguments

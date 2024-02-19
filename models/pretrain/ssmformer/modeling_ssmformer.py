@@ -14,13 +14,10 @@ from transformers.utils import (
     logging,
     replace_return_docstrings,
 )
-from .configuration_blink import BlinkConfig
-
-
+from .configuration_ssmformer import SSMFormerConfig
 logger = logging.get_logger(__name__)
-
-_CONFIG_FOR_DOC = "BlinklConfig"
-
+from einops import einsum, rearrange, repeat
+_CONFIG_FOR_DOC = "SSMFormerlConfig"
 
 def _get_unpad_data(padding_mask):
     seqlens_in_batch = padding_mask.sum(dim=-1, dtype=torch.int32)
@@ -150,6 +147,203 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     hidden_states = hidden_states[:, :, None, :, :].expand(
         batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+
+class Mamba(nn.Module):
+    """
+    Initialize a single Mamba block.
+
+    Args:
+        dim (int): The input dimension.
+        dim_inner (Optional[int]): The inner dimension. If not provided, it is set to dim * expand.
+        depth (int): The depth of the Mamba block.
+        d_state (int): The state dimension. Default is 16.
+        expand (int): The expansion factor. Default is 2.
+        dt_rank (Union[int, str]): The rank of the temporal difference (Δ) tensor. Default is "auto".
+        d_conv (int): The dimension of the convolutional kernel. Default is 4.
+        conv_bias (bool): Whether to include bias in the convolutional layer. Default is True.
+        bias (bool): Whether to include bias in the linear layers. Default is False.
+
+    Examples:
+        >>> import torch
+        >>> from zeta.nn.modules.simple_mamba import MambaBlock
+        >>> block = MambaBlock(dim=64, depth=1)
+        >>> x = torch.randn(1, 10, 64)
+        >>> y = block(x)
+        >>> y.shape
+        torch.Size([1, 10, 64])
+    """
+
+    def __init__(
+        self,
+        config:SSMFormerConfig,
+        conv_bias: bool = True,
+        bias: bool = False,
+    ):
+        """A single Mamba block, as described in Figure 3 in Section 3.4 in the Mamba paper [1]."""
+        super().__init__()
+        self.dim = config.hidden_size
+        self.d_state = config.d_state
+        self.expand = config.expand
+        self.d_conv = config.d_conv
+        self.conv_bias = conv_bias
+        self.bias = bias
+
+        # If dt_rank is not provided, set it to ceil(dim / d_state)
+        dt_rank = math.ceil(self.dim / 16)
+        self.dt_rank = dt_rank
+
+        # If dim_inner is not provided, set it to dim * expand
+        dim_inner = self.dim * self.expand
+        self.dim_inner = dim_inner
+
+        # If dim_inner is not provided, set it to dim * expand
+        self.in_proj = nn.Linear(self.expand, dim_inner * 2, bias=bias)
+
+        self.conv1d = nn.Conv1d(
+            in_channels=dim_inner,
+            out_channels=dim_inner,
+            bias=conv_bias,
+            kernel_size=self.d_conv,
+            groups=dim_inner,
+            padding=self.d_conv - 1,
+        )
+
+        # x_proj takes in `x` and outputs the input-specific Δ, B, C
+        self.x_proj = nn.Linear(
+            dim_inner, dt_rank + self.d_state * 2, bias=False
+        )
+
+        # dt_proj projects Δ from dt_rank to d_in
+        self.dt_proj = nn.Linear(dt_rank, dim_inner, bias=True)
+
+        A = repeat(torch.arange(1, self.d_state + 1), "n -> d n", d=dim_inner)
+        self.A_log = nn.Parameter(torch.log(A))
+        self.D = nn.Parameter(torch.ones(dim_inner))
+        self.out_proj = nn.Linear(dim_inner, self.dim, bias=bias)
+
+    def forward(self, x: torch.Tensor):
+        """Mamba block forward. This looks the same as Figure 3 in Section 3.4 in the Mamba paper [1].
+
+        Args:
+            x: shape (b, l, d)    (See Glossary at top for definitions of b, l, d_in, n...)
+
+        Returns:
+            output: shape (b, l, d)
+
+
+        Official Implementation:
+            class Mamba, https://github.com/state-spaces/mamba/blob/main/mamba_ssm/modules/mamba_simple.py#L119
+            mamba_inner_ref(), https://github.com/state-spaces/mamba/blob/main/mamba_ssm/ops/selective_scan_interface.py#L311
+
+        """
+        (b, l, d) = x.shape
+
+        x_and_res = self.in_proj(x)  # shape (b, l, 2 * d_in)
+        x_and_res = rearrange(x_and_res, "b l x -> b x l")
+        (x, res) = x_and_res.split(
+            split_size=[self.dim_inner, self.dim_inner], dim=1
+        )
+
+        x = self.conv1d(x)[:, :, :l]
+        x = F.silu(x)
+
+        y = self.ssm(x)
+
+        y = y * F.silu(res)
+
+        output = self.out_proj(rearrange(y, "b dim l -> b l dim"))
+
+        return output
+
+    def ssm(self, x: torch.Tensor):
+        """Runs the SSM. See:
+            - Algorithm 2 in Section 3.2 in the Mamba paper [1]
+            - run_SSM(A, B, C, u) in The Annotated S4 [2]
+
+        Args:
+            x: shape (b, d_in, l)    (See Glossary at top for definitions of b, l, d_in, n...)
+
+        Returns:
+            output: shape (b, d_in, l)
+
+        Official Implementation:
+            mamba_inner_ref(), https://github.com/state-spaces/mamba/blob/main/mamba_ssm/ops/selective_scan_interface.py#L311
+
+        """
+        (d_in, n) = self.A_log.shape
+
+        # Compute ∆ A B C D, the state space parameters.
+        #     A, D are input independent
+        #     ∆, B, C are input-dependent (this is a key difference between Mamba and the linear time invariant S4)
+
+        A = -torch.exp(self.A_log.float())  # shape (d_in, n)
+        D = self.D.float()
+
+        x_dbl = rearrange(x, "b d l -> b l d")
+        x_dbl = self.x_proj(x_dbl)  # (b, l, dt_rank + 2*n)
+
+        (delta, B, C) = x_dbl.split(
+            split_size=[self.dt_rank, n, n], dim=-1
+        )  # delta: (b, l, dt_rank). B, C: (b, l, n)
+        delta = F.softplus(self.dt_proj(delta))  # (b, l, d_in)
+
+        y = self.selective_scan(
+            x, delta, A, B, C, D
+        )  # This is similar to run_SSM(A, B, C, u) in The Annotated S4 [2]
+
+        return y
+
+    def selective_scan(self, u, delta, A, B, C, D):
+        """Does selective scan algorithm. See:
+            - Section 2 State Space Models in the Mamba paper [1]
+            - Algorithm 2 in Section 3.2 in the Mamba paper [1]
+            - run_SSM(A, B, C, u) in The Annotated S4 [2]
+
+        This is the classic discrete state space formula:
+            x(t + 1) = Ax(t) + Bu(t)
+            y(t)     = Cx(t) + Du(t)
+        except B and C (and the step size delta, which is used for discretization) are dependent on the input x(t).
+
+        Args:
+            u: shape (b, d_in, l)    (See Glossary at top for definitions of b, l, d_in, n...)
+            delta: shape (b, l, d_in)
+            A: shape (d_in, n)
+            B: shape (b, l, n)
+            C: shape (b, l, n)
+            D: shape (d_in,)
+
+        Returns:
+            output: shape (b, d_in, l)
+
+        Official Implementation:
+            selective_scan_ref(), https://github.com/state-spaces/mamba/blob/main/mamba_ssm/ops/selective_scan_interface.py#L86
+            Note: I refactored some parts out of `selective_scan_ref` out, so the functionality doesn't match exactly.
+
+        """
+        (b, d_in, l) = u.shape
+        n = A.shape[1]
+
+        # Discretize continuous parameters (Δ, A, B)  (see Section 2 Equation 4 in the Mamba paper [1])
+        # Note that B is parameterized directly
+        deltaA = torch.exp(einsum(delta, A, "b l d_in, d_in n -> b d_in l n"))
+        deltaB_u = einsum(
+            delta, B, u, "b l d_in, b l n, b d_in l -> b d_in l n"
+        )
+
+        # Perform selective scan (see scan_SSM() in The Annotated S4 [2])
+        x = torch.zeros((b, d_in, n))
+        ys = []
+        for i in range(l):
+            x = deltaA[:, :, i] * x + deltaB_u[:, :, i]
+            y = einsum(x, C[:, i, :], "b d_in n , b n -> b d_in")
+            ys.append(y)
+        y = torch.stack(ys, dim=2)  # (b d_in l)
+
+        if D is not None:
+            y = y + u * rearrange(D, "d_in -> d_in 1")
+
+        return y
 
 
 class RMSNorm(nn.Module):
@@ -416,31 +610,13 @@ class DynamicYaRNScaledRotaryEmbedding(torch.nn.Module):
         self.mscale = float(_yarn_get_mscale(scale) * self.attn_factor)
 
 
-class MLP(nn.Module):
-    def __init__(self, config: BlinkConfig):
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(
-            self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(
-            self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(
-            self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = ACT2FN[config.hidden_act]
-
-    def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-
 class Attention(nn.Module):
     """
     Multi-headed attention from 'Attention Is All You Need' paper. Modified to use sliding window attention: Longformer
     and "Generating Long Sequences with Sparse Transformers".
     """
 
-    def __init__(self, config: BlinkConfig):
+    def __init__(self, config: SSMFormerConfig):
         super().__init__()
         self.config = config
         self.hidden_size = config.hidden_size
@@ -585,13 +761,13 @@ class Attention(nn.Module):
 
 
 class SoftMoE(nn.Module):
-    def __init__(self, config: BlinkConfig):
+    def __init__(self, config: SSMFormerConfig):
         super().__init__()
         self.norm = RMSNorm(config.hidden_size)
         self.slot_embeds = nn.Parameter(torch.rand(
             (config.moe_num_experts, config.moe_num_slots, config.hidden_size)))
         self.experts = nn.ModuleList(
-            [MLP(config) for _ in range(config.moe_num_experts)])
+            [Mamba(config=config) for _ in range(config.moe_num_experts)])
         self.add_noise = config.moe_add_noise
         self.noise_mult = config.moe_noise_mult
 
@@ -625,12 +801,12 @@ class SoftMoE(nn.Module):
 class DroplessMoE(nn.Module):
     def __init__(
             self,
-            config: BlinkConfig):
+            config: SSMFormerConfig):
         super().__init__()
         self.config = config
         num_experts = config.moe_num_experts
         self.experts = nn.ModuleList(
-            [MLP(config) for i in range(num_experts)])
+            [Mamba(config=config) for i in range(num_experts)])
         self.gate = nn.Linear(config.hidden_size, num_experts, bias=False)
         self.num_experts_per_token = config.moe_num_experts_per_token
 
@@ -654,7 +830,7 @@ class DroplessMoE(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, config: BlinkConfig, layer_idx: Optional[int] = None):
+    def __init__(self, config: SSMFormerConfig, layer_idx: Optional[int] = None):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.self_attn = Attention(config=config)
@@ -665,7 +841,7 @@ class DecoderLayer(nn.Module):
             else:
                 self.mlp = DroplessMoE(config)
         else:
-            self.mlp = MLP(config)
+            self.mlp = Mamba(config=config)
         self.input_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
@@ -728,8 +904,8 @@ class DecoderLayer(nn.Module):
         return outputs
 
 
-class BlinkPreTrainedModel(PreTrainedModel):
-    config_class = BlinkConfig
+class SSMFormerPreTrainedModel(PreTrainedModel):
+    config_class = SSMFormerConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["DecoderLayer"]
@@ -748,7 +924,7 @@ class BlinkPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class BlinkModel(BlinkPreTrainedModel):
+class SSMFormerModel(SSMFormerPreTrainedModel):
     """
     Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`DecoderLayer`]
 
@@ -756,7 +932,7 @@ class BlinkModel(BlinkPreTrainedModel):
         config: Config
     """
 
-    def __init__(self, config: BlinkConfig):
+    def __init__(self, config: SSMFormerConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -766,7 +942,7 @@ class BlinkModel(BlinkPreTrainedModel):
         self.layers = nn.ModuleList([DecoderLayer(
             config, idx) for idx in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
+        self.mamba = Mamba(config=config)
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
@@ -896,6 +1072,8 @@ class BlinkModel(BlinkPreTrainedModel):
         )
 
         hidden_states = inputs_embeds
+        
+        hidden_states += self.mamba(hidden_states)
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -967,12 +1145,12 @@ class BlinkModel(BlinkPreTrainedModel):
         )
 
 
-class BlinkForCausalLM(BlinkPreTrainedModel):
+class SSMFormerForCausalLM(SSMFormerPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    def __init__(self, config: BlinkConfig):
+    def __init__(self, config: SSMFormerConfig):
         super().__init__(config)
-        self.model = BlinkModel(config)
+        self.model = SSMFormerModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(
             config.hidden_size, config.vocab_size, bias=False)
@@ -1127,11 +1305,11 @@ class BlinkForCausalLM(BlinkPreTrainedModel):
         return reordered_past
 
 
-class BlinkForSequenceClassification(BlinkPreTrainedModel):
-    def __init__(self, config: BlinkConfig):
+class SSMFormerForSequenceClassification(SSMFormerPreTrainedModel):
+    def __init__(self, config: SSMFormerConfig):
         super().__init__(config)
         self.num_labels = config.num_labels
-        self.model = BlinkModel(config)
+        self.model = SSMFormerModel(config)
         self.score = nn.Linear(config.hidden_size, self.num_labels, bias=False)
 
         # Initialize weights and apply final processing

@@ -29,8 +29,7 @@ class ParallelLinear(torch.autograd.Function):
             Tensor: Output tensor.
         """
         # expert_size_list: List[int] = expert_size.tolist()
-        output = ParallelLinear.forward_scriptable(
-            input, expert_size_list, weight, bias)
+        output = ParallelLinear.forward_scriptable(input, expert_size_list, weight, bias)
         # assert torch.allclose(ParallelLinear._forward_scriptable(input, expert_size, weight, bias),  output)
         ctx.save_for_backward(input, weight, bias)
         ctx.expert_size_list = expert_size_list
@@ -92,8 +91,8 @@ class ParallelLinear(torch.autograd.Function):
     @staticmethod
     @torch.jit.script
     def backward_scriptable(grad_out: Tensor,
-                            input: Tensor, expert_size_list: List[int],
-                            weight: Tensor, bias: Optional[Tensor]):
+                 input: Tensor, expert_size_list: List[int],
+                 weight: Tensor, bias: Optional[Tensor]):
         """
         Scriptable backward pass of the ParallelLinear operation.
 
@@ -127,8 +126,7 @@ class ParallelLinear(torch.autograd.Function):
         if bias is not None:
             d_bias_buf = torch.empty_like(bias)
             for i in range(num_linears):
-                torch.sum(grad_list[i], dim=0,
-                          keepdim=False, out=d_bias_buf[i])
+                torch.sum(grad_list[i], dim=0, keepdim=False, out=d_bias_buf[i])
             d_bias = d_bias_buf
         else:
             d_bias = None
@@ -151,8 +149,7 @@ class ParallelExperts(nn.Module):
         # self.input_experts = nn.ModuleList(
         #     [nn.Linear(input_size, output_size, bias=bias) for _ in range(num_experts)]
         # )
-        self.weight = nn.Parameter(torch.empty(
-            num_experts, input_size, output_size))
+        self.weight = nn.Parameter(torch.empty(num_experts, input_size, output_size))
         if bias:
             self.bias = nn.Parameter(torch.zeros(num_experts, output_size))
         else:
@@ -172,8 +169,7 @@ class ParallelExperts(nn.Module):
         """
         # std = math.sqrt(2.0 / float(self.weight.size(1) + self.weight.size(2)))
         # a = math.sqrt(3.0) * std
-        nn.init.uniform_(self.weight, -1. / self.weight.size(1),
-                         1. / self.weight.size(1))
+        nn.init.uniform_(self.weight, -1. / self.weight.size(1), 1. / self.weight.size(1))
         if self.bias is not None:
             fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight[0])
             bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
@@ -190,8 +186,7 @@ class ParallelExperts(nn.Module):
         Returns:
             Tensor: Output tensor.
         """
-        results = ParallelLinear.apply(
-            inputs, expert_size, self.weight, self.bias)
+        results = ParallelLinear.apply(inputs, expert_size, self.weight, self.bias)
         # expert_size_list: List[int] = expert_size.tolist()
         # input_list = inputs.split(expert_size_list, dim=0)
         # output_list = []

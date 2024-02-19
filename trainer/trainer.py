@@ -51,7 +51,7 @@ class PLTrainer(Trainer):
         seed_worker()
         self.args = args
         self.resume = args.resume
-        self.training_model = Base(model=model, tokenizer=tokenizer, args=args)
+        self.training_model = Base(model, args)
         self.tokenizer = tokenizer
         if example_input_array is None:
             example_input_array = collate_fn(
@@ -96,6 +96,8 @@ class PLTrainer(Trainer):
 
     def save_pretrained(self):
         self.training_model.save_pretrained(self.args.output_dir + "/result")
+        if self.tokenizer is not None:
+            self.tokenizer.save_pretrained(self.args.output_dir + "/result")
 
     def to_torchscript(self, ckpt_path):
         ckpt_path = self._checkpoint_connector._select_ckpt_path(
@@ -104,8 +106,12 @@ class PLTrainer(Trainer):
             model_provided=True,
             model_connected=self.training_model is not None,
         )
-        self.training_model.load_from_checkpoint(ckpt_path)
-        self.training_model.to_torchscript(self.args.output_dir + "/model.pt")
+        self.training_model.load_from_checkpoint(ckpt_path, map_location='cpu')
+        try:
+            self.training_model.to_torchscript(self.args.output_dir + "/model.pt")
+        except Exception as e:
+            self.save_pretrained()
+            self.print("to_torchscript error")
 
 
 class HFTrainer(transformers.Trainer):
@@ -197,10 +203,14 @@ def get_trainer(args: TrainArguments | TrainingArguments,
                             max_epochs=args.num_epochs,
                             max_steps=args.step_size,
                             **kwargs)
-    else:
+        return trainer
+    elif isinstance(args, TrainingArguments):
         trainer = HFTrainer(model=model, args=args,
                             train_dataset=train_dataset,
                             eval_dataset=eval_dataset,
                             collate_fn=collate_fn,
                             tokenizer=tokenizer, **kwargs)
-    return trainer
+        return trainer
+    else:
+        ValueError("args must be TrainArguments or TrainingArguments")
+    

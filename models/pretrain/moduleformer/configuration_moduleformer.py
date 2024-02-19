@@ -16,6 +16,7 @@ logger = logging.get_logger(__name__)
 # }
 
 
+
 class ModuleFormerConfig(PretrainedConfig):
     r"""
     This is the configuration class to store the configuration of a [`ModuleFormerModel`]. It is used to instantiate a
@@ -87,28 +88,28 @@ class ModuleFormerConfig(PretrainedConfig):
         n_embd=1024,
         n_layer=24,
         n_head=8,
-        att_hidden=512,
+        att_hidden = 512,
         ffd_hidden=2048,
         activation_function="gelu_new",
         resid_pdrop=0.0,
         embd_pdrop=0.0,
         attn_pdrop=0.0,
         moe_pdrop=0.0,
-        sample_topk=0,
-        gating_size=256,
-        n_att_experts=32,
-        k_att=2,
-        n_mlp_experts=32,
-        k_mlp=2,
+        sample_topk = 0,
+        gating_size = 256,
+        n_att_experts = 32,
+        k_att = 2,
+        n_mlp_experts = 32,
+        k_mlp = 2,
         layer_norm_epsilon=1e-5,
         initializer_range=0.02,
         use_cache=True,
         bos_token_id=50256,
         eos_token_id=50256,
         tie_word_embeddings=False,
-        aux_loss_type='mi',
+        aux_loss_type = 'mi',
         aux_loss_weight=0,
-        gate_type="mlp",
+        gate_type = "mlp",
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -179,8 +180,7 @@ class ModuleFormerOnnxConfig(OnnxConfigWithPast):
         common_inputs = OrderedDict({"input_ids": {0: "batch", 1: "sequence"}})
         if self.use_past:
             self.fill_with_past_key_values_(common_inputs, direction="inputs")
-            common_inputs["attention_mask"] = {
-                0: "batch", 1: "past_sequence + sequence"}
+            common_inputs["attention_mask"] = {0: "batch", 1: "past_sequence + sequence"}
         else:
             common_inputs["attention_mask"] = {0: "batch", 1: "sequence"}
 
@@ -237,8 +237,7 @@ class ModuleFormerOnnxConfig(OnnxConfigWithPast):
         # Need to add the past_keys
         if self.use_past:
             if not is_torch_available():
-                raise ValueError(
-                    "Cannot generate dummy past_keys inputs without PyTorch installed.")
+                raise ValueError("Cannot generate dummy past_keys inputs without PyTorch installed.")
             else:
                 import torch
 

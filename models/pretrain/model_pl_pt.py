@@ -1,8 +1,10 @@
 from trainer.trainer import get_trainer
 from models.pretrain.blink.modeling_blink import BlinkForCausalLM
 from models.pretrain.blink.configuration_blink import BlinkConfig
-from dataclasses import dataclass
-from typing import List, Dict, Any, Tuple
+from models.pretrain.ssmformer.configuration_ssmformer import SSMFormerConfig
+from models.pretrain.ssmformer.modeling_ssmformer import SSMFormerForCausalLM
+from dataclasses import dataclass,field
+from typing import List, Dict, Any, Tuple, Optional
 from datasets import load_from_disk, Dataset
 from transformers import AutoTokenizer, DefaultDataCollator
 from utils.utils import TrainArguments, get_train_args
@@ -30,7 +32,69 @@ class HugeDataCollator(DefaultDataCollator):
         return output
 
 
-def get_tokenizer(script_args: TrainArguments) -> AutoTokenizer:
+
+@dataclass
+class ScriptArguments(TrainArguments):
+    tokenizer_path: str = field(
+        default=None,
+        metadata={"help": "train test split ratio"})
+
+    data_dir: str = field(
+        default=None,
+        metadata={"help": "data dir "})
+
+    val_data_percentage: Optional[float] = field(
+        default=0.00001,
+        metadata={"help": "train test split ratio"})
+
+    hidden_size: int = field(
+        default=2048,
+        metadata={"help": "model hidden size"})
+
+    intermediate_size: int = field(
+        default=2048*4,
+        metadata={"help": "model ffn intermediate size"})
+
+    num_hidden_layers: int = field(
+        default=12,
+        metadata={"help": "model num of hidden layers"})
+
+    num_attention_heads: int = field(
+        default=8,
+        metadata={"help": "model num of attention heads"})
+
+    num_key_value_heads: int = field(
+        default=2,
+        metadata={"help": "model nnum_key_value_heads"})
+
+    max_length: int = field(
+        default=4096,
+        metadata={"help": "model nnum_key_value_heads"})
+
+    sliding_window_size: Optional[int] = field(
+        default=None,
+        metadata={"help": "attention sliding window size"})
+
+    use_moe: bool = field(
+        default=False,
+        metadata={"help": "use moe or not"}
+    )
+    use_soft_moe: bool = field(
+        default=False,
+        metadata={"help": "use soft moe or not"}
+    )
+    moe_num_experts: int = field(
+        default=4,
+        metadata={"help": "moe num experts"}
+    )
+    moe_num_slots: int = field(
+        default=32,
+        metadata={"help": "moe num slots"}
+    )
+
+
+
+def get_tokenizer(script_args: ScriptArguments) -> AutoTokenizer:
     tokenizer = AutoTokenizer.from_pretrained(
         script_args.tokenizer_path, padding_side="left", trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -38,38 +102,38 @@ def get_tokenizer(script_args: TrainArguments) -> AutoTokenizer:
     return tokenizer
 
 
-def get_data(script_args: TrainArguments) -> Tuple[Dataset, Dataset]:
+def get_data(script_args: ScriptArguments) -> Tuple[Dataset, Dataset]:
     raw_data = load_from_disk(script_args.data_dir)['train']
     data = raw_data.train_test_split(
         test_size=script_args.val_data_percentage)
     return data['train'], data['test']
 
 
-def get_model_and_tokenizer(script_args: TrainArguments) -> Tuple[BlinkForCausalLM, AutoTokenizer, BlinkConfig]:
+def get_model_and_tokenizer(script_args: ScriptArguments) -> Tuple[SSMFormerForCausalLM, AutoTokenizer, SSMFormerConfig]:
     tokenizer = get_tokenizer(script_args)
-    config = BlinkConfig(vocab_size=len(tokenizer),
-                         hidden_size=2048,
-                         intermediate_size=2048*4,
-                         num_hidden_layers=8,
-                         num_attention_heads=8,
-                         num_key_value_heads=2,
-                         max_position_embeddings=2048,
+    config = SSMFormerConfig(vocab_size=len(tokenizer),
+                         hidden_size=script_args.hidden_size,
+                         intermediate_size=script_args.intermediate_size,
+                         num_hidden_layers=script_args.num_hidden_layers,
+                         num_attention_heads=script_args.num_attention_heads,
+                         num_key_value_heads=script_args.num_key_value_heads,
+                         max_position_embeddings=script_args.max_length,
                          pad_token_id=tokenizer.pad_token_id,
                          eos_token_id=tokenizer.eos_token_id,
                          bos_token_id=tokenizer.bos_token_id,
-                         sliding_window=512,
-                         use_moe=True,
-                         moe_soft=False,
-                         moe_num_experts=8,
+                         sliding_window=script_args.sliding_window_size,
+                         use_moe=script_args.use_moe,
+                         moe_soft=script_args.use_soft_moe,
+                         moe_num_experts=script_args.moe_num_experts,
                          torch_dtype=torch.bfloat16,
-                         moe_num_slots=32,
+                         moe_num_slots=script_args.moe_num_slots,
                          )
-    model = BlinkForCausalLM(config=config)
+    model = SSMFormerForCausalLM(config=config)
     return model, tokenizer, config
 
 
 def main():
-    script_args = get_train_args()
+    script_args = get_train_args(ScriptArguments)
     train_dataset, eval_dataset = get_data(script_args)
     model, tokenizer, config = get_model_and_tokenizer(script_args)
     data_collator = HugeDataCollator(

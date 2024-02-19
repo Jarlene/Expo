@@ -5,8 +5,8 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class BlinkConfig(PretrainedConfig):
-    model_type = "blink"
+class SSMFormerConfig(PretrainedConfig):
+    model_type = "ssmformer"
     keys_to_ignore_at_inference = ["past_key_values"]
 
     def __init__(
@@ -20,6 +20,9 @@ class BlinkConfig(PretrainedConfig):
         hidden_act="silu",
         max_position_embeddings=4096 * 32,
         initializer_range=0.02,
+        d_state=16,
+        d_conv=4,
+        expand=2,
         rms_norm_eps=1e-6,
         use_cache=False,
         pad_token_id=0,
@@ -45,7 +48,11 @@ class BlinkConfig(PretrainedConfig):
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.sliding_window = sliding_window
-
+        self.d_state = d_state
+        self.d_conv = d_conv
+        self.expand =expand
+        self.depth= depth
+        
         # for backward compatibility
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads

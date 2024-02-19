@@ -1,15 +1,22 @@
 from trainer.trainer import get_trainer
 from models.pretrain.blink.modeling_blink import BlinkForCausalLM
 from models.pretrain.blink.configuration_blink import BlinkConfig
+from models.pretrain.ssmformer.configuration_ssmformer import SSMFormerConfig
+from models.pretrain.ssmformer.modeling_ssmformer import SSMFormerForCausalLM
+from models.pretrain.moduleformer.configuration_moduleformer import ModuleFormerConfig
+from models.pretrain.moduleformer.modeling_moduleformer import ModuleFormerForCausalLM
 from dataclasses import dataclass
 from typing import List, Dict, Any, Tuple, Optional
 from datasets import load_from_disk, Dataset
-from transformers import AutoTokenizer, DefaultDataCollator, TrainingArguments
+from transformers import AutoTokenizer, DefaultDataCollator, TrainingArguments, AutoModelForCausalLM, MODEL_FOR_CAUSAL_LM_MAPPING
+
 from utils.utils import get_train_args
 import torch
 import math
 from dataclasses import dataclass, field
-
+AutoModelForCausalLM.register(BlinkConfig, BlinkForCausalLM)
+AutoModelForCausalLM.register(SSMFormerConfig, SSMFormerForCausalLM)
+AutoModelForCausalLM.register(ModuleFormerConfig, ModuleFormerForCausalLM)
 
 @dataclass
 class ScriptArguments(TrainingArguments):
@@ -69,7 +76,10 @@ class ScriptArguments(TrainingArguments):
         default=32,
         metadata={"help": "moe num slots"}
     )
-
+    model_name: str = field(
+        default='blink',
+        metadata={"help": "model name"}
+    )
 
 @dataclass
 class HugeDataCollator(DefaultDataCollator):
@@ -107,9 +117,18 @@ def get_data(script_args: ScriptArguments) -> Tuple[Dataset, Dataset]:
     return data['train'], data['test']
 
 
-def get_model_and_tokenizer(script_args: ScriptArguments) -> Tuple[BlinkForCausalLM, AutoTokenizer, BlinkConfig]:
+def get_model_and_tokenizer(script_args: ScriptArguments):
     tokenizer = get_tokenizer(script_args)
-    config = BlinkConfig(vocab_size=len(tokenizer),
+    ConfigClass=None
+    if script_args.model_name == 'blink':
+        ConfigClass = BlinkConfig
+    elif script_args.model_name == 'ssmformer':
+        ConfigClass = SSMFormerConfig
+    elif  script_args.model_name == 'moduleformer':
+        ConfigClass = ModuleFormerConfig
+    else:   
+        pass
+    config = ConfigClass(vocab_size=len(tokenizer),
                          hidden_size=script_args.hidden_size,
                          intermediate_size=script_args.intermediate_size,
                          num_hidden_layers=script_args.num_hidden_layers,
@@ -126,7 +145,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments) -> Tuple[BlinkForCausa
                          torch_dtype=torch.bfloat16,
                          moe_num_slots=script_args.moe_num_slots,
                          )
-    model = BlinkForCausalLM(config=config)
+    model = AutoModelForCausalLM.from_config(config=config, trust_remote_code=True)
     return model, tokenizer, config
 
 
@@ -143,8 +162,7 @@ def main():
         model=model,
         tokenizer=tokenizer,
         collate_fn=data_collator)
-    resume_from_checkpoint = script_args.resume_from_checkpoint
-    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    trainer.train()
     metrics = trainer.evaluate()
     metrics["eval_samples"] = len(eval_dataset)
     try:
