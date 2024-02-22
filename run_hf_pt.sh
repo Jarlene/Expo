@@ -3,17 +3,22 @@ set -e
 
 lr=1e-4
 tokenizer_path=/home/work/xiongwenlong/models/chatglm3-6b-32k
-dataset_dir=/home/work/xiongwenlong/data/wudao
+dataset_dir=gbharti/finance-alpaca
+
 per_device_train_batch_size=4
 per_device_eval_batch_size=4
 gradient_accumulation_steps=4
 
 deepspeed_config_file=config/ds_zero2_no_offload.json
-num_proc=2
+
+devices=0,1,2,3
+arr=(`echo $devices | tr ',' ' '`)
+num_proc=${#arr[@]}
+
 model_name=$1
 version="v1"
 
-accelerate launch --num_machines=1  --gpu_ids=6,7 --mixed_precision=fp16 --main_process_port=6512  --num_processes=$num_proc model_hf_pt.py \
+accelerate launch --num_machines=1  --gpu_ids=$devices --mixed_precision=fp16 --main_process_port=6512  --num_processes=$num_proc model_hf_pt.py \
     --model_name $model_name \
     --data_dir $dataset_dir \
     --tokenizer_path $tokenizer_path \

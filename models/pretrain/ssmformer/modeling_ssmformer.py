@@ -331,7 +331,7 @@ class Mamba(nn.Module):
         )
 
         # Perform selective scan (see scan_SSM() in The Annotated S4 [2])
-        x = torch.zeros((b, d_in, n)).to(deltaA.device)
+        x = torch.zeros((b, d_in, n), dtype=deltaA.dtype).to(deltaA.device)
         ys = []
         for i in range(l):
             x = deltaA[:, :, i] * x + deltaB_u[:, :, i]

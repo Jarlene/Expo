@@ -2,14 +2,19 @@
 set -e
 
 #tokenizer_path=/home/work/xiongwenlong/models/chatglm3-6b-32k
-dataset_dir=/home/work/xiongwenlong/data/wudao
+dataset_dir=gbharti/finance-alpaca
 model_dir=/home/work/xiongwenlong/models
+
 lora_trainable="gate_proj,up_proj,down_proj"
 modules_to_save="lm_head,embed_tokens"
 lora_rank=16
 lora_alpha=32
 lora_dropout=0.05
-num_proc=4
+
+devices=0,1,2,3
+arr=(`echo $devices | tr ',' ' '`)
+num_proc=${#arr[@]}
+
 model_name=$1
 pretrained_model="${model_dir}/${model_name}"
 
@@ -20,6 +25,7 @@ OMP_NUM_THREADS=8  torchrun --standalone --nproc_per_node=$num_proc model_pl_sft
     --output_dir output/pl \
     --name $model_name \
     --strategy deepspeed_stage_2 \
+    --devices $devices \
     --quantizer true \
     --num_epochs 1 \
     --version v1 \

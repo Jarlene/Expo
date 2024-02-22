@@ -2,9 +2,13 @@
 set -e
 
 tokenizer_path=/home/work/xiongwenlong/models/chatglm3-6b-32k
-dataset_dir=/home/work/xiongwenlong/data/wudao
+dataset_dir=gbharti/finance-alpaca
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc_per_node=8 model_pl_pt.py \
+devices=0,1,2,3
+arr=(`echo $devices | tr ',' ' '`)
+num_proc=${#arr[@]}
+
+OMP_NUM_THREADS=8  torchrun --standalone --nproc_per_node=$num_proc model_pl_pt.py \
     --tokenizer_path $tokenizer_path \
     --data_dir $dataset_dir \
     --batch_size 10 \
@@ -14,6 +18,7 @@ OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --n
     --log_every_n_steps 10 \
     --val_check_interval 100 \
     --strategy deepspeed_stage_2 \
+    --devices $devices \
     --num_epochs 1 \
     --version v1 \
     --d_state 8 \
