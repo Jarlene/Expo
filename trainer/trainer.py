@@ -167,7 +167,7 @@ def get_trainer(args: TrainArguments | TrainingArguments,
                             strategy=args.strategy,
                             devices=args.devices,
                             precision=args.precision,
-                            num_nodes=args.num_epochs,
+                            num_nodes=args.num_nodes,
                             enable_checkpointing=True,
                             callbacks=[
                                 LearningRateMonitor(),

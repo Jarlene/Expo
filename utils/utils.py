@@ -51,6 +51,10 @@ class TrainArguments(Namespace):
     strategy: Optional[str] = field(
         default='auto',
         metadata={"help": "use lightning training model strategy"})
+    
+    num_nodes: Optional[int] = field(
+        default=1,
+        metadata={"help": "use lightning training model num nodes"})
 
     precision: Optional[str] = field(
         default='bf16',
