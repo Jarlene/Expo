@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import math
 import torch
 import os
-from datasets import load_from_disk
+from datasets import load_from_disk,load_dataset,DatasetDict
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollator, BitsAndBytesConfig
 from sklearn.metrics import accuracy_score
@@ -118,7 +118,12 @@ def get_tokenizer(script_args: ScriptArguments):
 
 
 def get_data(script_args: ScriptArguments):
-    raw_data = load_from_disk(script_args.data_dir)['train']
+    if script_args.data_dir.startswith('/'):
+        raw_data = load_from_disk(script_args.data_dir)
+    else:
+        raw_data = load_dataset(script_args.data_dir, split='train')
+    if isinstance(raw_data, DatasetDict):
+        raw_data = raw_data['train']
     data = raw_data.train_test_split(
         test_size=script_args.val_data_percentage)
     return data['train'], data['test']
