@@ -91,7 +91,7 @@ class PLTrainer(Trainer):
                     ckpt_path='last' if self.resume else None)
 
     def save_pretrained(self):
-        dir_path = os.path.join(self.args.output_dir,self.args.name,self.args.version, "/result")
+        dir_path = os.path.join(self.args.output_dir,self.args.name,self.args.version, "result")
         self.training_model.save_pretrained(dir_path)
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(dir_path)
