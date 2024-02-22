@@ -39,10 +39,6 @@ class HugeDataCollator(DefaultDataCollator):
 
 @dataclass
 class ScriptArguments(TrainArguments):
-    tokenizer_path: str = field(
-        default=None,
-        metadata={"help": "train test split ratio"})
-
     data_dir: str = field(
         default=None,
         metadata={"help": "data dir "})

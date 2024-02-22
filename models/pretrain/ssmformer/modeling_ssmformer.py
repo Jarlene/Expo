@@ -773,16 +773,8 @@ class SSMFormerModel(SSMFormerPreTrainedModel):
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
             if self.gradient_checkpointing and self.training:
-
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        # None for past_key_value
-                        return module(*inputs, past_key_value, output_attentions, padding_mask=padding_mask)
-
-                    return custom_forward
-
                 layer_outputs = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(decoder_layer),
+                    decoder_layer.__call__,
                     hidden_states,
                     attention_mask,
                     position_ids,

@@ -103,10 +103,10 @@ class TrainArguments(Namespace):
         metadata={"help": "train test split ratio"})
     tokenizer_path: str = field(
         default=None,
-        metadata={"help": "train test split ratio"})
-    model_name_or_path: Optional[str] = field(
-        default="../sft/results/final_checkpoint",
-        metadata={"help": "the location of the SFT model name or path"},
+        metadata={"help": "tokenizer path"})
+    model_name_or_path:str = field(
+        default=None,
+        metadata={"help": "the location of the model name or path"},
     )
 
 
