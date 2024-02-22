@@ -148,7 +148,6 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
         batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
-
 class Mamba(nn.Module):
     """
     Initialize a single Mamba block.
@@ -198,7 +197,7 @@ class Mamba(nn.Module):
         self.dim_inner = dim_inner
 
         # If dim_inner is not provided, set it to dim * expand
-        self.in_proj = nn.Linear(self.expand, dim_inner * 2, bias=bias)
+        self.in_proj = nn.Linear(self.dim, dim_inner * 2, bias=bias)
 
         self.conv1d = nn.Conv1d(
             in_channels=dim_inner,
@@ -332,7 +331,7 @@ class Mamba(nn.Module):
         )
 
         # Perform selective scan (see scan_SSM() in The Annotated S4 [2])
-        x = torch.zeros((b, d_in, n))
+        x = torch.zeros((b, d_in, n)).to(deltaA.device)
         ys = []
         for i in range(l):
             x = deltaA[:, :, i] * x + deltaB_u[:, :, i]
@@ -759,6 +758,9 @@ class Attention(nn.Module):
 
         return attn_output, attn_weights, past_key_value
 
+
+class AgentAttention(nn.Module):
+    
 
 class SoftMoE(nn.Module):
     def __init__(self, config: SSMFormerConfig):

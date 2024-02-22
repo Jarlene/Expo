@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any, Dict, List, Optional
 
 
 @torch.jit.script

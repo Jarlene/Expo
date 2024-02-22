@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Sequence, Tuple, Union
 import torch
-
 import torch.nn as nn
 
 
@@ -94,6 +93,9 @@ class Router(nn.Module):
             router_probs, dtype=torch.float32, dim=-2)
 
         if expert_mask is not None:
+            expert_mask = torch.nn.functional.one_hot(
+                expert_mask, num_experts, dtype=torch.int32)
+            expert_mask, expert_index = torch.max(expert_mask, dim=-2)
             tokens_per_expert = torch.mean(
                 expert_mask, dtype=torch.float32, dim=-2)
             return torch.mean(

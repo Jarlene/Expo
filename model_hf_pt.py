@@ -1,28 +1,29 @@
+import torch
+import math
+from dataclasses import dataclass, field
+from typing import List, Dict, Any, Tuple, Optional
+from datasets import load_from_disk, Dataset
+from transformers import AutoTokenizer, DefaultDataCollator, TrainingArguments, AutoModelForCausalLM, AutoConfig, MODEL_FOR_CAUSAL_LM_MAPPING
+
 from trainer.trainer import get_trainer
+from utils.utils import get_train_args
 from models.pretrain.blink.modeling_blink import BlinkForCausalLM
 from models.pretrain.blink.configuration_blink import BlinkConfig
 from models.pretrain.ssmformer.configuration_ssmformer import SSMFormerConfig
 from models.pretrain.ssmformer.modeling_ssmformer import SSMFormerForCausalLM
 from models.pretrain.moduleformer.configuration_moduleformer import ModuleFormerConfig
 from models.pretrain.moduleformer.modeling_moduleformer import ModuleFormerForCausalLM
-from dataclasses import dataclass
-from typing import List, Dict, Any, Tuple, Optional
-from datasets import load_from_disk, Dataset
-from transformers import AutoTokenizer, DefaultDataCollator, TrainingArguments, AutoModelForCausalLM, MODEL_FOR_CAUSAL_LM_MAPPING
 
-from utils.utils import get_train_args
-import torch
-import math
-from dataclasses import dataclass, field
 AutoModelForCausalLM.register(BlinkConfig, BlinkForCausalLM)
 AutoModelForCausalLM.register(SSMFormerConfig, SSMFormerForCausalLM)
 AutoModelForCausalLM.register(ModuleFormerConfig, ModuleFormerForCausalLM)
+
 
 @dataclass
 class ScriptArguments(TrainingArguments):
     tokenizer_path: str = field(
         default=None,
-        metadata={"help": "train test split ratio"})
+        metadata={"help": "tokenizer_path"})
 
     data_dir: str = field(
         default=None,
@@ -37,7 +38,7 @@ class ScriptArguments(TrainingArguments):
         metadata={"help": "model hidden size"})
 
     intermediate_size: int = field(
-        default=2048*4,
+        default=hidden_size.numerator*4,
         metadata={"help": "model ffn intermediate size"})
 
     num_hidden_layers: int = field(
@@ -77,9 +78,22 @@ class ScriptArguments(TrainingArguments):
         metadata={"help": "moe num slots"}
     )
     model_name: str = field(
-        default='blink',
+        default='ssmformer',
         metadata={"help": "model name"}
     )
+    d_state: Optional[int] = field(
+        default=16,
+        metadata={"help": "ssm model d_state"}
+    )
+    d_conv: Optional[int] = field(
+        default=4,
+        metadata={"help": "ssm model d_conv"}
+    )
+    expand: Optional[int] = field(
+        default=2,
+        metadata={"help": "ssm model expand"}
+    )
+
 
 @dataclass
 class HugeDataCollator(DefaultDataCollator):
@@ -117,35 +131,64 @@ def get_data(script_args: ScriptArguments) -> Tuple[Dataset, Dataset]:
     return data['train'], data['test']
 
 
-def get_model_and_tokenizer(script_args: ScriptArguments):
+def get_model_and_tokenizer(script_args: ScriptArguments) -> Tuple[AutoModelForCausalLM, AutoTokenizer, AutoConfig]:
     tokenizer = get_tokenizer(script_args)
-    ConfigClass=None
     if script_args.model_name == 'blink':
-        ConfigClass = BlinkConfig
+        config = BlinkConfig(vocab_size=len(tokenizer),
+                             hidden_size=script_args.hidden_size,
+                             intermediate_size=script_args.intermediate_size,
+                             num_hidden_layers=script_args.num_hidden_layers,
+                             num_attention_heads=script_args.num_attention_heads,
+                             num_key_value_heads=script_args.num_key_value_heads,
+                             max_position_embeddings=script_args.max_length,
+                             pad_token_id=tokenizer.pad_token_id,
+                             eos_token_id=tokenizer.eos_token_id,
+                             bos_token_id=tokenizer.bos_token_id,
+                             sliding_window=script_args.sliding_window_size,
+                             use_moe=script_args.use_moe,
+                             moe_soft=script_args.use_soft_moe,
+                             moe_num_experts=script_args.moe_num_experts,
+                             torch_dtype=torch.bfloat16,
+                             moe_num_slots=script_args.moe_num_slots,
+
+                             )
     elif script_args.model_name == 'ssmformer':
-        ConfigClass = SSMFormerConfig
-    elif  script_args.model_name == 'moduleformer':
-        ConfigClass = ModuleFormerConfig
-    else:   
-        pass
-    config = ConfigClass(vocab_size=len(tokenizer),
-                         hidden_size=script_args.hidden_size,
-                         intermediate_size=script_args.intermediate_size,
-                         num_hidden_layers=script_args.num_hidden_layers,
-                         num_attention_heads=script_args.num_attention_heads,
-                         num_key_value_heads=script_args.num_key_value_heads,
-                         max_position_embeddings=script_args.max_length,
-                         pad_token_id=tokenizer.pad_token_id,
-                         eos_token_id=tokenizer.eos_token_id,
-                         bos_token_id=tokenizer.bos_token_id,
-                         sliding_window=script_args.sliding_window_size,
-                         use_moe=script_args.use_moe,
-                         moe_soft=script_args.use_soft_moe,
-                         moe_num_experts=script_args.moe_num_experts,
-                         torch_dtype=torch.bfloat16,
-                         moe_num_slots=script_args.moe_num_slots,
-                         )
-    model = AutoModelForCausalLM.from_config(config=config, trust_remote_code=True)
+        config = SSMFormerConfig(
+            vocab_size=len(tokenizer),
+            hidden_size=script_args.hidden_size,
+            intermediate_size=script_args.intermediate_size,
+            num_hidden_layers=script_args.num_hidden_layers,
+            num_attention_heads=script_args.num_attention_heads,
+            num_key_value_heads=script_args.num_key_value_heads,
+            max_position_embeddings=script_args.max_length,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            bos_token_id=tokenizer.bos_token_id,
+            sliding_window=script_args.sliding_window_size,
+            use_moe=script_args.use_moe,
+            moe_soft=script_args.use_soft_moe,
+            moe_num_experts=script_args.moe_num_experts,
+            torch_dtype=torch.bfloat16,
+            moe_num_slots=script_args.moe_num_slots,
+            d_state=script_args.d_state,
+            d_conv=script_args.d_conv,
+            expand=script_args.expand,
+        )
+    elif script_args.model_name == 'moduleformer':
+        config = ModuleFormerConfig(
+            vocab_size=len(tokenizer),
+            hidden_size=script_args.hidden_size,
+            max_position_embeddings=script_args.max_length,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            bos_token_id=tokenizer.bos_token_id,
+        )
+    else:
+        config = AutoConfig.from_pretrained(
+            script_args.model_name, trust_remote_code=True)
+
+    model = AutoModelForCausalLM.from_config(
+        config=config, trust_remote_code=True)
     return model, tokenizer, config
 
 

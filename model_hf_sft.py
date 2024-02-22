@@ -1,15 +1,13 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import math
-import copy
 import torch
-import torch.nn as nn
-from datasets import load_from_disk, DatasetDict
-from peft import MoELoraConfig, PeftModel, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer, HfArgumentParser, TrainingArguments, DefaultDataCollator, BitsAndBytesConfig, Trainer
+from datasets import load_from_disk, load_dataset, DatasetDict
+from peft import LoraConfig, MoELoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, DefaultDataCollator, BitsAndBytesConfig
 from sklearn.metrics import accuracy_score
-from utils import get_train_args
-from trainer import get_trainer
+from utils.utils import get_train_args
+from trainer.trainer import get_trainer
 
 
 def accuracy(predictions, references, normalize=True, sample_weight=None):
@@ -30,6 +28,29 @@ def compute_metrics(eval_preds):
     return accuracy(predictions=preds, references=labels)
 
 
+def generate_prompt(data_point):
+    """
+    Generate input text based on a prompt, task instruction, (context info.), and answer
+
+    :param data_point: dict: Data point
+    :return: dict: tokenized prompt
+    """
+
+    if data_point['input']:
+        text = 'Below is an instruction that describes a task, paired with an input that provides' \
+               ' further context. Write a response that appropriately completes the request.\n\n'
+        text += f'### Instruction:\n{data_point["instruction"]}\n\n'
+        text += f'### Input:\n{data_point["input"]}\n\n'
+        text += f'### Response:\n{data_point["output"]}'
+
+    else:
+        text = 'Below is an instruction that describes a task. Write a response that ' \
+               'appropriately completes the request.\n\n'
+        text += f'### Instruction:\n{data_point["instruction"]}\n\n'
+        text += f'### Response:\n{data_point["output"]}'
+    return text
+
+
 @dataclass
 class HugeDataCollator(DefaultDataCollator):
 
@@ -40,8 +61,7 @@ class HugeDataCollator(DefaultDataCollator):
 内容：{content}"""
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [self.template.format(
-            title=d['title'], dataType=d['dataType'], content=d['content']) for d in features]
+        contents = [generate_prompt(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -62,6 +82,18 @@ class ScriptArguments(TrainingArguments):
         default="../sft/results/final_checkpoint",
         metadata={"help": "the location of the SFT model name or path"},
     )
+    data_dir: str = field(
+        default=None,
+        metadata={"help": "data dir "},
+    )
+
+    val_data_percentage: Optional[float] = field(
+        default=0.00001,
+        metadata={"help": "train test split ratio"})
+
+    tokenizer_path: str = field(
+        default=None,
+        metadata={"help": "tokenizer path"})
 
     quantizer: Optional[bool] = field(default=True,
                                       metadata={
@@ -86,6 +118,11 @@ class ScriptArguments(TrainingArguments):
                                           'help': "lora trainable params"})
     modules_to_save: Optional[str] = field(default=None, metadata={
                                            'help': "lora  params to save"})
+    adapter_name: Optional[str] = field(
+        default='default', metadata={'help': "adapter name"})
+
+    adapter_type: Optional[str] = field(
+        default='moe_lora', metadata={'help': "adapter type"})
 
 
 def get_tokenizer(script_args: ScriptArguments):
@@ -111,30 +148,47 @@ def get_lora_config(script_args: ScriptArguments):
         modules = script_args.modules_to_save.split(',')
         if len(modules) == 1:
             modules = modules[0]
-    peft_config = MoELoraConfig(
-        r=script_args.lora_rank,
-        lora_alpha=script_args.lora_alpha,
-        lora_dropout=script_args.lora_dropout,
-        target_modules=targets,
-        modules_to_save=modules,
-        task_type="CAUSAL_LM",
-        bias='none',
-        router_jitter_noise=script_args.router_jitter_noise,
-        num_experts=script_args.num_experts,
-        num_experts_per_token=script_args.num_experts_per_token,
-    )
+
+    if script_args.adapter_type == 'moe_lora':
+        peft_config = MoELoraConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+            router_jitter_noise=script_args.router_jitter_noise,
+            num_experts=script_args.num_experts,
+            num_experts_per_token=script_args.num_experts_per_token,
+        )
+    elif script_args.adapter_type == 'lora':
+        peft_config = LoraConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+        )
 
     return peft_config
 
 
 def get_data(script_args: ScriptArguments):
-    raw_data = load_from_disk(script_args.data_dir)['train']
+    if script_args.data_dir.startswith('/'):
+        raw_data = load_from_disk(script_args.data_dir)
+    else:
+        raw_data = load_dataset(script_args.data_dir, split='train')
+    if isinstance(raw_data, DatasetDict):
+        raw_data = raw_data['train']
     data = raw_data.train_test_split(
         test_size=script_args.val_data_percentage)
     return data['train'], data['test']
 
 
-def get_model_and_tokenizer(script_args: ScriptArguments, training_args: TrainingArguments, trainable=False):
+def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -148,25 +202,24 @@ def get_model_and_tokenizer(script_args: ScriptArguments, training_args: Trainin
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
+    model = prepare_model_for_kbit_training(
+        model, use_gradient_checkpointing=True)
     if trainable:
         model.config.use_cache = False
     peft_config = get_lora_config(script_args)
-    if training_args.resume_from_checkpoint:
+    if script_args.resume_from_checkpoint:
         model = PeftModel.from_pretrained(
-            model, training_args.resume_from_checkpoint)
+            model, script_args.resume_from_checkpoint,
+            adapter_name=script_args.adapter_name,
+            is_trainable=True, config=peft_config)
     else:
-        model = get_peft_model(model, peft_config, adapter_name='sft')
+        model = get_peft_model(
+            model, peft_config, adapter_name=script_args.adapter_name)
     model.print_trainable_parameters()
     print(model)
     tokenizer, need_resize_embed = get_tokenizer(script_args)
     if need_resize_embed:
         model.resize_token_embeddings(len(tokenizer))
-    if script_args.num_experts > 0:
-        model.config.num_experts = script_args.num_experts
-        model.config.router_jitter_noise = script_args.router_jitter_noise
-        model.config.num_experts_per_token = script_args.num_experts_per_token
-    model.gradient_checkpointing_enable()
-    model.enable_input_require_grads()
     return model, tokenizer
 
 
@@ -185,9 +238,7 @@ def main():
         collate_fn=data_collator,
         compute_metrics=compute_metrics,
     )
-
-    resume_from_checkpoint = script_args.resume_from_checkpoint
-    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    trainer.train()
     metrics = trainer.evaluate()
     metrics["eval_samples"] = len(eval_dataset)
     try:

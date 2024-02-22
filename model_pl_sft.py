@@ -1,19 +1,40 @@
 import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import torch
-import copy
-import torch.nn as nn
 from trainer.trainer import get_trainer
 from utils.utils import TrainArguments, get_train_args
 from dataclasses import dataclass
 from typing import List, Dict, Any
-from datasets import load_from_disk
+from datasets import load_from_disk, load_dataset, DatasetDict
 from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollator, BitsAndBytesConfig
 
-from peft import MoVConfig, MoELoraConfig, get_peft_model
+from peft import MoELoraConfig, get_peft_model
 torch.set_float32_matmul_precision('medium')
-# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+def generate_prompt(data_point):
+    """
+    Generate input text based on a prompt, task instruction, (context info.), and answer
+
+    :param data_point: dict: Data point
+    :return: dict: tokenized prompt
+    """
+
+    if data_point['input']:
+        text = 'Below is an instruction that describes a task, paired with an input that provides' \
+               ' further context. Write a response that appropriately completes the request.\n\n'
+        text += f'### Instruction:\n{data_point["instruction"]}\n\n'
+        text += f'### Input:\n{data_point["input"]}\n\n'
+        text += f'### Response:\n{data_point["output"]}'
+
+    else:
+        text = 'Below is an instruction that describes a task. Write a response that ' \
+               'appropriately completes the request.\n\n'
+        text += f'### Instruction:\n{data_point["instruction"]}\n\n'
+        text += f'### Response:\n{data_point["output"]}'
+    return text
 
 
 @dataclass
@@ -46,19 +67,18 @@ class ScriptArguments(TrainArguments):
     modules_to_save: Optional[str] = field(default=None, metadata={
                                            'help': "lora  params to save"})
 
+    adapter_name: Optional[str] = field(
+        default='default', metadata={'help': "adapter name"})
+
 
 @dataclass
 class HugeDataCollator(DefaultDataCollator):
 
     tokenizer: AutoTokenizer = None
     max_length: int = None
-    template = """标题：{title}
-内容类别：{dataType}
-内容：{content}"""
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [self.template.format(
-            title=d['title'], dataType=d['dataType'], content=d['content']) for d in features]
+        contents = [generate_prompt(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -125,7 +145,8 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         model.config.use_cache = False
     peft_config = get_lora_config(script_args)
 
-    model = get_peft_model(model, peft_config, adapter_name='sft')
+    model = get_peft_model(
+        model, peft_config, adapter_name=script_args.adapter_name)
     model.print_trainable_parameters()
     print(model)
     model.config.num_experts = script_args.num_experts
@@ -141,7 +162,12 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
 
 
 def get_data(script_args: ScriptArguments):
-    raw_data = load_from_disk(script_args.data_dir)['train']
+    if script_args.data_dir.startswith('/'):
+        raw_data = load_from_disk(script_args.data_dir)
+    else:
+        raw_data = load_dataset(script_args.data_dir, split='train')
+    if isinstance(raw_data, DatasetDict):
+        raw_data = raw_data['train']
     data = raw_data.train_test_split(
         test_size=script_args.val_data_percentage)
     return data['train'], data['test']
@@ -160,11 +186,8 @@ def main():
         model=model,
         tokenizer=tokenizer,
         collate_fn=data_collator)
-    if script_args.script_able:
-        trainer.to_torchscript('last')
-    else:
-        trainer.train()
-        trainer.save_pretrained()
+    trainer.train()
+    trainer.save_pretrained()
 
 
 if __name__ == "__main__":

@@ -39,7 +39,14 @@ class Base(LightningModule):
             return
         if isinstance(metrics, Metric):
             metrics = [metrics]
-        self.metrics.extend(metrics)
+        for m in self.metrics:
+            self.metrics.append(m.to(self.device))
+
+    def configure_model(self):
+        self.print("configure_model")
+        for m in self.metrics:
+            m.to(self.device)
+        self.model.to(self.device)
 
     def prepare_inputs(self, data: Union[torch.Tensor, Any]) -> Union[torch.Tensor, Any]:
         if isinstance(data, Dict):

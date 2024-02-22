@@ -1,8 +1,5 @@
 import os
-import argparse
-from argparse import Namespace
-from dataclasses import dataclass, field
-from typing import Any, Union, Optional, Dict, List, Tuple, TypeVar
+from typing import Any, Union, Optional, Dict, List
 import random
 import numpy as np
 import torch
@@ -48,10 +45,9 @@ class PLTrainer(Trainer):
                  tokenizer: AutoTokenizer = None,
                  example_input_array=None, **kwargs):
         super().__init__(**kwargs)
-        seed_worker()
         self.args = args
         self.resume = args.resume
-        self.training_model = Base(model, args)
+        self.training_model = Base(model, tokenizer=tokenizer, args=args)
         self.tokenizer = tokenizer
         if example_input_array is None:
             example_input_array = collate_fn(
@@ -99,19 +95,9 @@ class PLTrainer(Trainer):
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(self.args.output_dir + "/result")
 
-    def to_torchscript(self, ckpt_path):
-        ckpt_path = self._checkpoint_connector._select_ckpt_path(
-            self.state.fn,
-            ckpt_path,
-            model_provided=True,
-            model_connected=self.training_model is not None,
-        )
-        self.training_model.load_from_checkpoint(ckpt_path, map_location='cpu')
-        try:
-            self.training_model.to_torchscript(self.args.output_dir + "/model.pt")
-        except Exception as e:
-            self.save_pretrained()
-            self.print("to_torchscript error")
+    def save_checkpoint(self, filepath, weights_only: bool = False, storage_options: Any | None = None) -> None:
+        self.training_model.save_pretrained(filepath)
+        return super().save_checkpoint(filepath, weights_only, storage_options)
 
 
 class HFTrainer(transformers.Trainer):
@@ -123,7 +109,6 @@ class HFTrainer(transformers.Trainer):
                  collate_fn: Any | None = None, **kwargs):
         super().__init__(model=model, args=args, data_collator=collate_fn,
                          train_dataset=train_dataset, eval_dataset=eval_dataset, **kwargs)
-        seed_worker()
         self.hf_model = isinstance(
             model, PreTrainedModel) or isinstance(model, PeftModel)
 
@@ -213,4 +198,3 @@ def get_trainer(args: TrainArguments | TrainingArguments,
         return trainer
     else:
         ValueError("args must be TrainArguments or TrainingArguments")
-    

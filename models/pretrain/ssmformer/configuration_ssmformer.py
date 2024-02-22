@@ -50,9 +50,8 @@ class SSMFormerConfig(PretrainedConfig):
         self.sliding_window = sliding_window
         self.d_state = d_state
         self.d_conv = d_conv
-        self.expand =expand
-        self.depth= depth
-        
+        self.expand = expand
+
         # for backward compatibility
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads

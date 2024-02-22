@@ -5,17 +5,15 @@ set -e
 dataset_dir=/home/work/xiongwenlong/data/wudao
 model_dir=/home/work/xiongwenlong/models
 lora_trainable="gate_proj,up_proj,down_proj"
-#lora_trainable=".*.\d.mlp.experts.\d.(gate_proj|down_proj|up_proj)$"
 modules_to_save="lm_head,embed_tokens"
 lora_rank=16
 lora_alpha=32
 lora_dropout=0.05
-num_proc=8
-
+num_proc=4
 model_name=$1
 pretrained_model="${model_dir}/${model_name}"
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 torchrun --standalone --nproc_per_node=8 model_pl_sft.py \
+OMP_NUM_THREADS=8  torchrun --standalone --nproc_per_node=$num_proc model_pl_sft.py \
     --model_name_or_path $pretrained_model \
     --data_dir $dataset_dir \
     --batch_size 4 \

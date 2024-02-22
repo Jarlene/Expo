@@ -32,13 +32,10 @@ class SLiCModel(UnpairedPreferenceModel):
         for batch_idx,  batch in enumerate(dataloader):
             if 'labels_hat' in batch.keys():
                 batch.pop('labels_hat')
-            if 'labels' in batch.keys():
-                labels = batch.pop('labels')
             with torch.no_grad():
                 res = self.model.generate(**batch)
-
             batch["labels_hat"] = res
-            batch['labels'] = labels
+
 
     def on_train_epoch_start(self):
         self.prepare_data()

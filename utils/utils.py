@@ -2,7 +2,7 @@ from argparse import Namespace
 from dataclasses import dataclass, field
 from typing import Union, Optional, TypeVar
 from transformers import HfArgumentParser
-
+import torch
 T = TypeVar('T')
 
 
@@ -117,3 +117,9 @@ def get_train_args(clazz: Optional[T] = None) -> Union[TrainArguments, T]:
         clazz = (clazz)
     parser = HfArgumentParser(clazz)
     return parser.parse_args_into_dataclasses()[0]
+
+
+def set_module_requires_grad(
+        module: torch.nn.Module,
+        requires_grad: bool):
+    module.requires_grad_(requires_grad)
