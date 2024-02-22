@@ -191,7 +191,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
-    prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     if trainable:
         model.config.use_cache = False
     tokenizer, need_resize_embed = get_tokenizer(script_args)

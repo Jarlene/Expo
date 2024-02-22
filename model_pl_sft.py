@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from datasets import load_from_disk, load_dataset, DatasetDict
 from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollator, BitsAndBytesConfig
 
-from peft import MoELoraConfig, get_peft_model
+from peft import MoELoraConfig, get_peft_model,prepare_model_for_kbit_training
 torch.set_float32_matmul_precision('medium')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -141,6 +141,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     if trainable:
         model.config.use_cache = False
     peft_config = get_lora_config(script_args)

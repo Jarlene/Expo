@@ -91,12 +91,13 @@ class PLTrainer(Trainer):
                     ckpt_path='last' if self.resume else None)
 
     def save_pretrained(self):
-        self.training_model.save_pretrained(self.args.output_dir + "/result")
+        dir_path = os.path.join(self.args.output_dir,self.args.name,self.args.version, "/result")
+        self.training_model.save_pretrained(dir_path)
         if self.tokenizer is not None:
-            self.tokenizer.save_pretrained(self.args.output_dir + "/result")
+            self.tokenizer.save_pretrained(dir_path)
 
     def save_checkpoint(self, filepath, weights_only: bool = False, storage_options: Any | None = None) -> None:
-        self.training_model.save_pretrained(filepath)
+        self.save_pretrained()
         return super().save_checkpoint(filepath, weights_only, storage_options)
 
 
