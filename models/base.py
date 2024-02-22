@@ -153,7 +153,7 @@ class Base(LightningModule):
 
     def save_pretrained(self, path):
         if self.hf_model:
-            self.model.save_pretrained(path)
+            self.model.save_pretrained(path, safe_serialization=False)
             if self.tokenizer:
                 self.tokenizer.save_pretrained(path)
 
