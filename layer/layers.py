@@ -15,27 +15,62 @@ class LayerNorm(torch.nn.Module):
         return F.layer_norm(x, x.shape[-1:], self.gamma, self.beta)
 
 
-class RMSNorm(torch.nn.Module):
-    def __init__(self, dim):
+class RMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
         super().__init__()
-        self.scale = dim ** 0.5
-        self.gamma = nn.Parameter(torch.ones(dim))
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
 
-    def forward(self, x):
-        return F.normalize(x, dim=- 1) * self.scale * self.gamma
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * \
+            torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
 
 
-class RotaryEmbedding(torch.nn.Module):
-    def __init__(self, dim, base=10000):
+
+
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq)
 
-    def forward(self, max_seq_len, *, device):
-        seq = torch.arange(max_seq_len, device=device,
-                           dtype=self.inv_freq.dtype)
-        freqs = torch.einsum("i , j -> i j", seq, self.inv_freq)
-        return torch.cat((freqs, freqs), dim=-1)
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / \
+            (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached,
+                         device=device, dtype=self.inv_freq.dtype)
+
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer(
+            "cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer(
+            "sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(
+                seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
 
 
 class RelPosBias2d(nn.Module):
