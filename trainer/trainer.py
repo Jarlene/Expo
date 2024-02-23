@@ -12,7 +12,7 @@ from torch.utils.data.dataloader import DataLoader
 from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.plugins import TorchCheckpointIO
-
+from lightning.pytorch.plugins import BitsandbytesPrecision
 from lightning.pytorch.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
@@ -150,6 +150,7 @@ def get_trainer(args: TrainArguments | TrainingArguments,
                 collate_fn=None,
                 tokenizer: AutoTokenizer = None,
                 example_input_array=None, **kwargs) -> Union[PLTrainer, HFTrainer]:
+    precision = BitsandbytesPrecision(mode="nf4-dq")
     if isinstance(args, TrainArguments):
         trainer = PLTrainer(args=args,
                             model=model,
@@ -167,7 +168,7 @@ def get_trainer(args: TrainArguments | TrainingArguments,
                                 version=args.version),
                             strategy=args.strategy,
                             devices=args.devices,
-                            precision=args.precision,
+                            precision=precision if args.quantizer else args.precision,
                             num_nodes=args.num_nodes,
                             enable_checkpointing=True,
                             callbacks=[

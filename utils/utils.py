@@ -112,7 +112,9 @@ class TrainArguments(Namespace):
         default=None,
         metadata={"help": "the location of the model name or path"},
     )
-
+    quantizer: Optional[bool] = field(default=None,
+                                      metadata={
+                                          "help": "load model quantizer"})
 
 def get_train_args(clazz: Optional[T] = None) -> Union[TrainArguments, T]:
     if clazz is None:

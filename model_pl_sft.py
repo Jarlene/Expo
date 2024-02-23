@@ -42,10 +42,6 @@ class ScriptArguments(TrainArguments):
     """
     The arguments for the sft training script.
     """
-
-    quantizer: Optional[bool] = field(default=None,
-                                      metadata={
-                                          "help": "load model quantizer"})
     num_experts: Optional[int] = field(
         default=0, metadata={"help": "the num of experts"})
     router_jitter_noise: Optional[float] = field(
