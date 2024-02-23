@@ -8,6 +8,17 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments,
 from sklearn.metrics import accuracy_score
 from utils.utils import get_train_args
 from trainer.trainer import get_trainer
+from accelerate import FullyShardedDataParallelPlugin, Accelerator
+from torch.distributed.fsdp.fully_sharded_data_parallel import FullOptimStateDictConfig, FullStateDictConfig
+
+fsdp_plugin = FullyShardedDataParallelPlugin(
+    state_dict_config=FullStateDictConfig(
+        offload_to_cpu=True, rank0_only=False),
+    optim_state_dict_config=FullOptimStateDictConfig(
+        offload_to_cpu=True, rank0_only=False),
+)
+
+accelerator = Accelerator(fsdp_plugin=fsdp_plugin)
 
 
 def accuracy(predictions, references, normalize=True, sample_weight=None):
@@ -215,6 +226,8 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     else:
         model = get_peft_model(
             model, peft_config, adapter_name=script_args.adapter_name)
+
+    model = accelerator.prepare_model(model)
     model.print_trainable_parameters()
     print(model)
     tokenizer, need_resize_embed = get_tokenizer(script_args)
