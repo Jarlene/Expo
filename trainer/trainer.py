@@ -150,7 +150,6 @@ def get_trainer(args: TrainArguments | TrainingArguments,
                 collate_fn=None,
                 tokenizer: AutoTokenizer = None,
                 example_input_array=None, **kwargs) -> Union[PLTrainer, HFTrainer]:
-    precision = BitsandbytesPrecision(mode="nf4-dq")
     if isinstance(args, TrainArguments):
         trainer = PLTrainer(args=args,
                             model=model,
@@ -186,7 +185,7 @@ def get_trainer(args: TrainArguments | TrainingArguments,
                                 RichModelSummary(3),
                                 DeviceStatsMonitor(),
                             ],
-                            plugins=[TorchCheckpointIO(), precision],
+                            plugins=[TorchCheckpointIO()],
                             #    profiler=PyTorchProfiler(),
                             max_epochs=args.num_epochs,
                             max_steps=args.step_size,
