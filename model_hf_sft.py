@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 import math
 import torch
 from datasets import load_from_disk, load_dataset, DatasetDict
-from peft import LoraConfig, MoELoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, MoVConfig, MoELoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, DefaultDataCollator, BitsAndBytesConfig
 from sklearn.metrics import accuracy_score
 from utils.utils import get_train_args
@@ -182,6 +182,19 @@ def get_lora_config(script_args: ScriptArguments):
             modules_to_save=modules,
             task_type="CAUSAL_LM",
             bias='none',
+        )
+    elif script_args.adapter_type == 'mov':
+        peft_config = MoVConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+            router_jitter_noise=script_args.router_jitter_noise,
+            num_experts=script_args.num_experts,
+            num_experts_per_token=script_args.num_experts_per_token,
         )
 
     return peft_config
