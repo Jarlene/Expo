@@ -432,3 +432,7 @@ class DualAttenion(nn.Module):
         src = src.reshape(B, nvars, -1, self.num_heads * self.head_dim)
 
         return src
+
+
+class RingAttention(nn.Module):
+    pass

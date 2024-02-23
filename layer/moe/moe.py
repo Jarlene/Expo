@@ -56,13 +56,16 @@ class DroplessMoE(nn.Module):
             hidden_size: int,
             num_experts: int,
             moe_num_experts_per_token: int,
+            router_jitter_noise: float,
             expert: nn.Module,):
         super().__init__()
         num_experts = num_experts
-        self.experts = nn.ModuleList(
-            [copy.deepcopy(expert) for i in range(num_experts)])
+        self.experts = nn.ModuleList([])
+        for i in range(num_experts):
+            self.experts.append(copy.deepcopy(expert).requires_grad_(True))
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
         self.num_experts_per_token = moe_num_experts_per_token
+        self.router_jitter_noise = router_jitter_noise
 
     def load_balancing_loss(self, router_probs: torch.Tensor, expert_mask: torch.Tensor = None):
         num_experts = router_probs.shape[-1]
@@ -83,6 +86,22 @@ class DroplessMoE(nn.Module):
                 router_prob_per_expert,
                 dtype=torch.float32) * num_experts**2
 
+    def add_noise(self, hidden_states, training: bool = False):
+        if self.router_jitter_noise > 0 and training:
+
+            distrib_lower_bound = 1.0 - self.router_jitter_noise
+            distrib_upper_bound = 1.0 + self.router_jitter_noise
+
+            uniform_distrib = torch.rand(
+                hidden_states.shape, device=hidden_states.device, dtype=hidden_states.dtype, requires_grad=False)
+            uniform_distrib = uniform_distrib * \
+                (distrib_lower_bound - distrib_upper_bound)
+
+            uniform_distrib = uniform_distrib + distrib_upper_bound
+            # Multiply the token inputs by the uniform distribution - adding some noise
+            hidden_states = hidden_states * uniform_distrib
+        return hidden_states
+
     def router_z_loss(self, router_logits: torch.Tensor):
         token_num, _ = router_logits.shape
         log_z = torch.logsumexp(router_logits, dim=-1)
@@ -95,8 +114,10 @@ class DroplessMoE(nn.Module):
             router_probs, expert_mask)
 
     def forward(self, x: torch.Tensor):
+        device = x.device
         orig_shape = x.shape
         x = x.view(-1, x.shape[-1])
+        x = self.add_noise(x)
         router_logits = self.gate(x)
         routing_weights = torch.nn.functional.softmax(router_logits, dim=-1)
         expert_weights, expert_indices = torch.topk(
@@ -106,6 +127,7 @@ class DroplessMoE(nn.Module):
         x = x.repeat_interleave(self.num_experts_per_token, dim=0)
         y = torch.zeros_like(x)
         for i, expert in enumerate(self.experts):
+            expert = expert.to(device)
             y[flat_expert_indices == i] += expert(x[flat_expert_indices == i])
         y = (y.view(*expert_weights.shape, -1) *
              expert_weights.unsqueeze(-1)).sum(dim=1)
