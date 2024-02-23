@@ -57,7 +57,7 @@ class TrainArguments(Namespace):
         metadata={"help": "use lightning training model num nodes"})
 
     precision: Optional[str] = field(
-        default='bf16',
+        default=None,
         metadata={"help": "use lightning training model precision"})
 
     log_dir: Optional[str] = field(
