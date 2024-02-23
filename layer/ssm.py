@@ -66,7 +66,7 @@ class Mamba(nn.Module):
 
         A = repeat(torch.arange(1, self.d_state + 1), "n -> d n", d=dim_inner)
         self.A_log = nn.Parameter(torch.log(A))
-        self.D = nn.Parameter(torch.ones(dim_inner))
+        self.D = nn.Parameter(torch.ones(dim_inner, dtype=torch.float32))
         self.out_proj = nn.Linear(dim_inner, self.dim, bias=bias)
 
     def forward(self, x: torch.Tensor):
