@@ -17,7 +17,7 @@ class SoftMoE(nn.Module):
         self.norm = RMSNorm(dim)
         self.slot_embeds = nn.Parameter(
             torch.rand((expers_num, slots_num, dim)))
-        self.experts = nn.ModuleList([copy.deepcopy(expert)
+        self.experts = nn.ModuleList([copy.deepcopy(expert).requires_grad_(True)
                                      for _ in range(expers_num)])
         self.add_noise = add_noise
         self.noise_scala = noise_scala
@@ -34,7 +34,7 @@ class SoftMoE(nn.Module):
         logits = torch.einsum(
             'bnd,esd->bnes', hidden_states, slot_embeds)
 
-        if self.add_noise:
+        if self.add_noise and self.training:
             noise = self.gumbel_noise(logits) * self.noise_scala
             logits = logits + noise
 
@@ -131,4 +131,4 @@ class DroplessMoE(nn.Module):
             y[flat_expert_indices == i] += expert(x[flat_expert_indices == i])
         y = (y.view(*expert_weights.shape, -1) *
              expert_weights.unsqueeze(-1)).sum(dim=1)
-        return y.view(*orig_shape)
+        return y.view(*orig_shape), self.z_loss, self.auxiliary_loss

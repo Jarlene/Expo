@@ -28,8 +28,8 @@ class SPINModel(SLiCModel):
         self.prepare_data()
 
     def compute_loss(self, batch):
-        labels_hat = batch.pop('labels_hat')
-        labels = batch.pop('labels')
+        labels_hat = batch['labels_hat']
+        labels = batch['labels']
 
     def training_step(self, batch, batch_idx):
         loss = self.compute_loss(batch)

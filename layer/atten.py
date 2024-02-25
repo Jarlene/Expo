@@ -7,6 +7,7 @@ from einops import rearrange, einsum, repeat
 from einops.layers.torch import Rearrange
 import torch
 
+
 class Transpose(nn.Module):
     def __init__(self, *size) -> None:
         super().__init__()
@@ -14,6 +15,7 @@ class Transpose(nn.Module):
 
     def forward(self, x):
         return torch.transpose(x, *self.size)
+
 
 class SelfAttention(nn.Module):
 
@@ -87,6 +89,7 @@ class SelfAttention(nn.Module):
         out = self.resid_dropout(out)
         return out, attn
 
+
 class CrossAttention(nn.Module):
     def __init__(self, hidden_size, num_heads, dropout=0.5, split_head=True) -> None:
         super(CrossAttention, self).__init__()
@@ -148,24 +151,25 @@ class CrossAttention(nn.Module):
         out = self.resid_dropout(out)
         return out, attn
 
+
 class AgentAttention(nn.Module):
     def __init__(
-        self,
-        hidden_size,
-        num_agent_tokens,
-        heads_num = 8,
-        dropout = 0.02,
-        dim_inner = None,
-        talking_heads = True,
-        gate = True,):
+            self,
+            hidden_size,
+            num_agent_tokens,
+            heads_num=8,
+            dropout=0.02,
+            dim_inner=None,
+            talking_heads=True,
+            gate=True,):
         super().__init__()
         dim_head = hidden_size//heads_num
         self.scale = dim_head ** -0.5
         dim_inner = dim_inner if dim_inner is not None else hidden_size
 
         self.to_qkv = nn.Sequential(
-            nn.Linear(hidden_size, dim_inner * 3, bias = False),
-            Rearrange('b n (qkv h d) -> qkv b h n d', h = heads_num, qkv = 3)
+            nn.Linear(hidden_size, dim_inner * 3, bias=False),
+            Rearrange('b n (qkv h d) -> qkv b h n d', h=heads_num, qkv=3)
         )
 
         self.to_gates = nn.Sequential(
@@ -174,48 +178,56 @@ class AgentAttention(nn.Module):
             nn.Sigmoid()
         ) if gate else None
 
-        self.agent_tokens = nn.Parameter(torch.zeros(heads_num, num_agent_tokens, dim_head))
-        nn.init.normal_(self.agent_tokens, std = 0.02)
+        self.agent_tokens = nn.Parameter(
+            torch.zeros(heads_num, num_agent_tokens, dim_head))
+        nn.init.normal_(self.agent_tokens, std=0.02)
 
-        self.qa_talking_heads = nn.Conv2d(heads_num, heads_num, 1, bias = False) if talking_heads else nn.Identity()
-        self.ak_talking_heads = nn.Conv2d(heads_num, heads_num, 1, bias = False) if talking_heads else nn.Identity()
+        self.qa_talking_heads = nn.Conv2d(
+            heads_num, heads_num, 1, bias=False) if talking_heads else nn.Identity()
+        self.ak_talking_heads = nn.Conv2d(
+            heads_num, heads_num, 1, bias=False) if talking_heads else nn.Identity()
 
         self.qa_dropout = nn.Dropout(dropout)
         self.ak_dropout = nn.Dropout(dropout)
 
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
-            nn.Linear(dim_inner, hidden_size, bias = False)
+            nn.Linear(dim_inner, hidden_size, bias=False)
         )
 
     def forward(
-        self,
-        x,
-        mask = None,
-        agent_tokens = None):
+            self,
+            x,
+            mask=None,
+            agent_tokens=None):
         batch = x.shape[0]
         q, k, v = self.to_qkv(x)
-        a = agent_tokens if agent_tokens is not None else repeat(self.agent_tokens, 'h m d -> b h m d', b = batch)
+        a = agent_tokens if agent_tokens is not None else repeat(
+            self.agent_tokens, 'h m d -> b h m d', b=batch)
         a = a * self.scale
         qa_sim = einsum('b h i d, b h j d -> b h i j', q, a)
         ak_sim = einsum('b h i d, b h j d -> b h i j', a, k)
         if mask is not None:
             max_neg_value = -torch.finfo(qa_sim.dtype).max
-            ak_sim = ak_sim.masked_fill(~rearrange(mask, 'b j -> b 1 1 j'), max_neg_value)
-        qa_attn = qa_sim.softmax(dim = -1)
-        ak_attn = ak_sim.softmax(dim = -1)
+            ak_sim = ak_sim.masked_fill(~rearrange(
+                mask, 'b j -> b 1 1 j'), max_neg_value)
+        qa_attn = qa_sim.softmax(dim=-1)
+        ak_attn = ak_sim.softmax(dim=-1)
         qa_attn = self.qa_dropout(qa_attn)
         ak_attn = self.ak_dropout(ak_attn)
         qa_attn = self.qa_talking_heads(qa_attn)
         ak_attn = self.ak_talking_heads(ak_attn)
-        agent_gathered_tokens = einsum('b h i j, b h j d -> b h i d', ak_attn, v)
-        out = einsum('b h i j, b h j d -> b h i d', qa_attn, agent_gathered_tokens)
+        agent_gathered_tokens = einsum(
+            'b h i j, b h j d -> b h i d', ak_attn, v)
+        out = einsum('b h i j, b h j d -> b h i d',
+                     qa_attn, agent_gathered_tokens)
         if mask is not None:
             out = out.masked_fill(~rearrange(mask, 'b n -> b 1 n 1'), 0.)
         if self.to_gates is not None:
             out = out * self.to_gates(x)
         out = self.to_out(out)
         return out, agent_gathered_tokens
+
 
 class ProbAttention(nn.Module):
     def __init__(self, factor=5, scale=None, attention_dropout=0.1, output_attention=False):
@@ -250,8 +262,7 @@ class ProbAttention(nn.Module):
         Q_K = torch.matmul(Q_reduce, K.transpose(-2, -1))  # factor*ln(L_q)*L_k
 
         return Q_K, M_top
-    
-    
+
     def _get_mask(self, B, H, L, index, scores):
         _mask = torch.ones(
             L, scores.shape[-1], dtype=torch.bool).triu(1)
@@ -261,7 +272,6 @@ class ProbAttention(nn.Module):
                              index, :]
         _mask = indicator.view(scores.shape)
         return _mask
-        
 
     def _get_initial_context(self, V, L_Q):
         B, H, L_V, D = V.shape
@@ -327,6 +337,7 @@ class ProbAttention(nn.Module):
             context, values, scores_top, index, L_Q, attn_mask)
 
         return context.transpose(2, 1).contiguous(), attn
+
 
 class DualAttenion(nn.Module):
     def __init__(self, hidden_size, enc_in, num_heads, dropout, momentum, d_ff, dp_rank, total_token_number, alpha, over_channel=False):
