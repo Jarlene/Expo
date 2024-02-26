@@ -68,7 +68,7 @@ class ScriptArguments(TrainArguments):
         metadata={"help": "model hidden size"})
 
     intermediate_size: int = field(
-        default=hidden_size*4,
+        default=hidden_size.real*4,
         metadata={"help": "model ffn intermediate size"})
 
     num_hidden_layers: int = field(
