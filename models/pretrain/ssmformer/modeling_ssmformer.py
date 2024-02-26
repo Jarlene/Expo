@@ -405,7 +405,8 @@ class SSMFormerModel(SSMFormerPreTrainedModel):
         self.layers = nn.ModuleList([DecoderLayer(
             config, idx) for idx in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.mamba = Mamba(config=config)
+        self.mamba = Mamba(dim=config.hidden_size, d_state=config.d_state,
+                           d_conv=config.d_conv, expand=config.expand)
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
