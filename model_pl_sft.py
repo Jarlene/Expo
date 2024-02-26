@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from typing import List, Dict, Any
 from datasets import load_from_disk, load_dataset, DatasetDict
 from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollator, BitsAndBytesConfig
+from metric.acc import Accuracy
+from torchmetrics.text.perplexity import Perplexity
 
-from peft import MoELoraConfig, get_peft_model,prepare_model_for_kbit_training
+from peft import MoELoraConfig, get_peft_model, prepare_model_for_kbit_training
 torch.set_float32_matmul_precision('medium')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -72,9 +74,10 @@ class HugeDataCollator(DefaultDataCollator):
 
     tokenizer: AutoTokenizer = None
     max_length: int = None
+    generate_func: Any = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [generate_prompt(d) for d in features]
+        contents = [self.generate_func(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -137,7 +140,8 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(
+        model, use_gradient_checkpointing=True)
     if trainable:
         model.config.use_cache = False
     peft_config = get_lora_config(script_args)
@@ -175,14 +179,15 @@ def main():
     train_dataset, eval_dataset = get_data(script_args)
     model, tokenizer = get_model_and_tokenizer(script_args, trainable=True)
     data_collator = HugeDataCollator(
-        tokenizer=tokenizer, max_length=script_args.max_length)
+        tokenizer=tokenizer, max_length=script_args.max_length, generate_func=generate_prompt)
     trainer = get_trainer(
         args=script_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         model=model,
         tokenizer=tokenizer,
-        collate_fn=data_collator)
+        collate_fn=data_collator,
+        metrics=[Accuracy(), Perplexity(ignore_index=-100)],)
     trainer.train()
     trainer.save_pretrained()
 

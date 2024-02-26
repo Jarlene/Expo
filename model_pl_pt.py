@@ -2,18 +2,37 @@ import torch
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Tuple, Optional
 from datasets import load_from_disk, Dataset
-from transformers import AutoTokenizer, DefaultDataCollator, AutoModelForCausalLM, AutoConfig
+from transformers import AutoTokenizer, DefaultDataCollator, AutoModelForCausalLM, AutoConfig, AutoModelForSequenceClassification
 from utils.utils import TrainArguments, get_train_args
 from trainer.trainer import get_trainer
-from models.pretrain.blink.modeling_blink import BlinkForCausalLM
+from models.pretrain.blink.modeling_blink import BlinkForCausalLM, BlinkForSequenceClassification
 from models.pretrain.blink.configuration_blink import BlinkConfig
 from models.pretrain.ssmformer.configuration_ssmformer import SSMFormerConfig
-from models.pretrain.ssmformer.modeling_ssmformer import SSMFormerForCausalLM
+from models.pretrain.ssmformer.modeling_ssmformer import SSMFormerForCausalLM, SSMFormerForSequenceClassification
 from models.pretrain.moduleformer.configuration_moduleformer import ModuleFormerConfig
-from models.pretrain.moduleformer.modeling_moduleformer import ModuleFormerForCausalLM
+from models.pretrain.moduleformer.modeling_moduleformer import ModuleFormerForCausalLM, ModuleFormerForSequenceClassification
+from metric.acc import Accuracy
+from torchmetrics.text.perplexity import Perplexity
+
+AutoConfig.register("blink", BlinkConfig)
+AutoConfig.register("ssmformer", SSMFormerConfig)
+AutoConfig.register("moduleformer", ModuleFormerConfig)
 AutoModelForCausalLM.register(BlinkConfig, BlinkForCausalLM)
 AutoModelForCausalLM.register(SSMFormerConfig, SSMFormerForCausalLM)
 AutoModelForCausalLM.register(ModuleFormerConfig, ModuleFormerForCausalLM)
+AutoModelForSequenceClassification.register(
+    BlinkConfig, BlinkForSequenceClassification)
+AutoModelForSequenceClassification.register(
+    SSMFormerConfig, SSMFormerForSequenceClassification)
+AutoModelForSequenceClassification.register(
+    ModuleFormerConfig, ModuleFormerForSequenceClassification)
+
+
+def generate_prompt(data):
+    template = """标题：{title}
+内容类别：{dataType}
+内容：{content}"""
+    return template.format(title=data['title'], dataType=data['dataType'], content=data['content'])
 
 
 @dataclass
@@ -21,13 +40,10 @@ class HugeDataCollator(DefaultDataCollator):
 
     tokenizer: AutoTokenizer = None
     max_length: int = None
-    template = """标题：{title}
-内容类别：{dataType}
-内容：{content}"""
+    generate_func: Any = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [self.template.format(
-            title=d['title'], dataType=d['dataType'], content=d['content']) for d in features]
+        contents = [self.generate_func(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -137,7 +153,6 @@ def get_model_and_tokenizer(script_args: ScriptArguments) -> Tuple[SSMFormerForC
                              use_moe=script_args.use_moe,
                              moe_soft=script_args.use_soft_moe,
                              moe_num_experts=script_args.moe_num_experts,
-                             torch_dtype=torch.bfloat16,
                              moe_num_slots=script_args.moe_num_slots,
 
                              )
@@ -157,7 +172,6 @@ def get_model_and_tokenizer(script_args: ScriptArguments) -> Tuple[SSMFormerForC
             use_moe=script_args.use_moe,
             moe_soft=script_args.use_soft_moe,
             moe_num_experts=script_args.moe_num_experts,
-            torch_dtype=torch.bfloat16,
             moe_num_slots=script_args.moe_num_slots,
             d_state=script_args.d_state,
             d_conv=script_args.d_conv,
@@ -186,14 +200,15 @@ def main():
     train_dataset, eval_dataset = get_data(script_args)
     model, tokenizer, config = get_model_and_tokenizer(script_args)
     data_collator = HugeDataCollator(
-        tokenizer=tokenizer, max_length=config.max_position_embeddings)
+        tokenizer=tokenizer, max_length=config.max_position_embeddings, generate_func=generate_prompt)
     trainer = get_trainer(
         args=script_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         model=model,
         tokenizer=tokenizer,
-        collate_fn=data_collator)
+        collate_fn=data_collator,
+        metrics=[Accuracy(), Perplexity(ignore_index=-100)])
     trainer.train()
     trainer.save_pretrained()
 

@@ -67,12 +67,10 @@ class HugeDataCollator(DefaultDataCollator):
 
     tokenizer: AutoTokenizer = None
     max_length: int = None
-    template = """标题：{title}
-内容类别：{dataType}
-内容：{content}"""
+    generate_func: Any = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [generate_prompt(d) for d in features]
+        contents = [self.generate_func(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -240,7 +238,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         model = get_peft_model(
             model, peft_config, adapter_name=script_args.adapter_name)
 
-    model = accelerator.prepare_model(model)
+    # model = accelerator.prepare_model(model)
     model.print_trainable_parameters()
     print(model)
     tokenizer, need_resize_embed = get_tokenizer(script_args)
@@ -254,7 +252,7 @@ def main():
     train_dataset, eval_dataset = get_data(script_args)
     model, tokenizer = get_model_and_tokenizer(script_args, trainable=True)
     data_collator = HugeDataCollator(
-        tokenizer=tokenizer, max_length=script_args.max_length)
+        tokenizer=tokenizer, max_length=script_args.max_length, generate_func=generate_prompt)
     trainer = get_trainer(
         args=script_args,
         train_dataset=train_dataset,
@@ -262,7 +260,7 @@ def main():
         model=model,
         tokenizer=tokenizer,
         collate_fn=data_collator,
-        compute_metrics=compute_metrics,
+        # compute_metrics=compute_metrics,
     )
     trainer.train()
     metrics = trainer.evaluate()

@@ -8,7 +8,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import random_split
 from torch.utils.data.dataloader import DataLoader
 
-
+from torchmetrics import Metric
 from lightning.pytorch.trainer.trainer import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.plugins import TorchCheckpointIO
@@ -43,11 +43,13 @@ class PLTrainer(Trainer):
                  eval_dataset: Dataset = None,
                  collate_fn=None,
                  tokenizer: AutoTokenizer = None,
-                 example_input_array=None, **kwargs):
+                 example_input_array=None,
+                 metrics=Optional[Union[Metric, List[Metric]]], **kwargs):
         super().__init__(**kwargs)
         self.args = args
         self.resume = args.resume
         self.training_model = Base(model, tokenizer=tokenizer, args=args)
+        self.training_model.register_metrics(metrics)
         self.tokenizer = tokenizer
         if example_input_array is None:
             example_input_array = collate_fn(
@@ -90,15 +92,16 @@ class PLTrainer(Trainer):
                     val_dataloaders=self.validate_dataloader,
                     ckpt_path='last' if self.resume else None)
 
-    def save_pretrained(self, dir_path =None):
+    def save_pretrained(self, dir_path=None):
         if dir_path is None:
-            dir_path = os.path.join(self.args.output_dir,self.args.name,self.args.version, "result")
+            dir_path = os.path.join(
+                self.args.output_dir, self.args.name, self.args.version, "result")
         self.training_model.save_pretrained(dir_path)
         if self.tokenizer is not None:
             self.tokenizer.save_pretrained(dir_path)
 
     def save_checkpoint(self, filepath, weights_only: bool = False, storage_options: Any | None = None) -> None:
-        self.save_pretrained(filepath +"/result")
+        self.save_pretrained(filepath + "/result")
         return super().save_checkpoint(filepath, weights_only, storage_options)
 
 
@@ -108,7 +111,8 @@ class HFTrainer(transformers.Trainer):
                  args: TrainingArguments,
                  train_dataset: Dataset,
                  eval_dataset: Dataset = None,
-                 collate_fn: Any | None = None, **kwargs):
+                 collate_fn: Any | None = None,
+                 metrics: Optional[Union[Metric, List[Metric]]] = None, **kwargs):
         super().__init__(model=model, args=args, data_collator=collate_fn,
                          train_dataset=train_dataset, eval_dataset=eval_dataset, **kwargs)
         self.hf_model = isinstance(
