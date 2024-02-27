@@ -59,7 +59,7 @@ class DroplessMoE(nn.Module):
             router_jitter_noise: float,
             expert: nn.Module,):
         super().__init__()
-        num_experts = num_experts
+        self.num_experts = num_experts
         self.experts = nn.ModuleList([])
         for i in range(num_experts):
             self.experts.append(copy.deepcopy(expert).requires_grad_(True))
@@ -114,21 +114,31 @@ class DroplessMoE(nn.Module):
             router_probs, expert_mask)
 
     def forward(self, x: torch.Tensor):
+        bs, seq, hidden_dim = x.shape
         device = x.device
-        orig_shape = x.shape
-        x = x.view(-1, x.shape[-1])
-        x = self.add_noise(x)
-        router_logits = self.gate(x)
+        y = x.view(-1, hidden_dim)
+        router_states = self.add_noise(y, self.training)
+        router_logits = self.gate(router_states)
         routing_weights = torch.nn.functional.softmax(router_logits, dim=-1)
         expert_weights, expert_indices = torch.topk(
             routing_weights, self.num_experts_per_token, dim=-1)
+
         self.computer_loss(router_logits, expert_weights, expert_indices)
-        flat_expert_indices = expert_indices.view(-1)
-        x = x.repeat_interleave(self.num_experts_per_token, dim=0)
-        y = torch.zeros_like(x)
+
+        top_k_routing_weights_sum = expert_weights.sum(
+            dim=-1, keepdim=True)
+        routing_weights = expert_weights / top_k_routing_weights_sum
+
+        expert_mask = torch.nn.functional.one_hot(
+            expert_indices, num_classes=self.num_experts).permute(2, 1, 0)
+        final_hidden_states = torch.zeros_like(y).view(-1, y.shape[-1])
         for i, expert in enumerate(self.experts):
             expert = expert.to(device)
-            y[flat_expert_indices == i] += expert(x[flat_expert_indices == i])
-        y = (y.view(*expert_weights.shape, -1) *
-             expert_weights.unsqueeze(-1)).sum(dim=1)
-        return y.view(*orig_shape), self.z_loss, self.auxiliary_loss
+            idx, top_x = torch.where(expert_mask[i])
+            top_x_list = top_x.tolist()
+            idx_list = idx.tolist()
+            z = y[None, top_x_list].reshape(-1, hidden_dim)
+            z = expert(z)
+            z = z * routing_weights[top_x_list, idx_list, None]
+            final_hidden_states.index_add_(0, top_x, z)
+        return final_hidden_states.view(bs, seq, hidden_dim), self.z_loss, self.auxiliary_loss
