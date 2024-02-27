@@ -293,7 +293,7 @@ class DecoderLayer(nn.Module):
             else:
                 self.mlp = DroplessMoE(
                     hidden_size=config.hidden_size, num_experts=config.moe_num_experts,
-                    moe_num_experts_per_token=config.moe_num_experts_per_token,
+                    num_experts_per_token=config.moe_num_experts_per_token,
                     router_jitter_noise=config.moe_num_slots, expert=expert)
         else:
             self.mlp = expert

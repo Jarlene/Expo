@@ -55,7 +55,7 @@ class DroplessMoE(nn.Module):
             self,
             hidden_size: int,
             num_experts: int,
-            moe_num_experts_per_token: int,
+            num_experts_per_token: int,
             router_jitter_noise: float,
             expert: nn.Module,):
         super().__init__()
@@ -64,7 +64,7 @@ class DroplessMoE(nn.Module):
         for i in range(num_experts):
             self.experts.append(copy.deepcopy(expert).requires_grad_(True))
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
-        self.num_experts_per_token = moe_num_experts_per_token
+        self.num_experts_per_token = num_experts_per_token
         self.router_jitter_noise = router_jitter_noise
 
     def load_balancing_loss(self, router_probs: torch.Tensor, expert_mask: torch.Tensor = None):
