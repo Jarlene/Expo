@@ -69,23 +69,23 @@ class DroplessMoE(nn.Module):
         self.router_jitter_noise = router_jitter_noise
 
     def load_balancing_loss(self, router_probs: torch.Tensor, expert_mask: torch.Tensor = None):
-        num_experts = router_probs.shape[-1]
+
         router_prob_per_expert = torch.mean(
             router_probs, dtype=torch.float32, dim=-2)
 
         if expert_mask is not None:
             expert_mask = torch.nn.functional.one_hot(
-                expert_mask, num_experts).to(torch.int32)
+                expert_mask, self.num_experts).to(torch.int32)
             expert_mask, expert_index = torch.max(expert_mask, dim=-2)
             tokens_per_expert = torch.mean(
                 expert_mask, dim=-2, dtype=torch.float32)
             return torch.mean(
                 tokens_per_expert * router_prob_per_expert,
-                dtype=torch.float32) * num_experts**2
+                dtype=torch.float32) * self.num_experts**2
         else:
             return torch.mean(
                 router_prob_per_expert,
-                dtype=torch.float32) * num_experts**2
+                dtype=torch.float32) * self.num_experts**2
 
     def add_noise(self, hidden_states, training: bool = False):
         if self.router_jitter_noise > 0 and training:
@@ -121,7 +121,7 @@ class DroplessMoE(nn.Module):
         # router_logits: (batch * sequence_length, n_experts)
         router_logits = self.gate(hidden_states)
 
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
+        routing_weights = F.softmax(router_logits, dim=-1, dtype=torch.float)
         routing_weights, selected_experts = torch.topk(
             routing_weights, self.num_experts_per_token, dim=-1)
         routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
@@ -132,10 +132,10 @@ class DroplessMoE(nn.Module):
         final_hidden_states = torch.zeros(
             (batch_size * sequence_length, hidden_dim), dtype=hidden_states.dtype, device=hidden_states.device)
         expert_mask = torch.nn.functional.one_hot(
-            selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+            selected_experts, num_classes=self.num_experts)
         for expert_idx in range(self.num_experts):
             expert_layer = self.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx])
+            top_x, idx = torch.where(expert_mask[..., expert_idx])
 
             if top_x.shape[0] == 0:
                 continue
@@ -150,7 +150,7 @@ class DroplessMoE(nn.Module):
             current_state = hidden_states[None,
                                           top_x_list].reshape(-1, hidden_dim)
             current_hidden_states = expert_layer(
-                current_state, routing_weights[top_x_list, idx_list, None])
+                current_state)*routing_weights[top_x_list, idx_list, None]
 
             # However `index_add_` only support torch tensors for indexing so we'll use
             # the `top_x` tensor here.
