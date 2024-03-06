@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional
 import math
 import torch
 from datasets import load_from_disk, load_dataset, DatasetDict
-from peft import LoraConfig, MoVConfig, MoELoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, MoVConfig, SoftLoraConfig, MoELoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, DefaultDataCollator, BitsAndBytesConfig
 from sklearn.metrics import accuracy_score
 from utils.utils import get_train_args
@@ -111,6 +111,8 @@ class ScriptArguments(TrainingArguments):
         default=4, metadata={"help": "the num of experts"})
     router_jitter_noise: Optional[float] = field(
         default=0.2, metadata={"help": "router_jitter_noise"})
+    slots_num: Optional[int] = field(
+        default=32, metadata={"help": "soft moe slots num"})
     num_experts_per_token: Optional[int] = field(
         default=3, metadata={"help": "num_experts_per_token"})
 
@@ -193,6 +195,19 @@ def get_lora_config(script_args: ScriptArguments):
             router_jitter_noise=script_args.router_jitter_noise,
             num_experts=script_args.num_experts,
             num_experts_per_token=script_args.num_experts_per_token,
+        )
+    elif script_args.adapter_type == 'soft':
+        peft_config = SoftLoraConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+            num_experts=script_args.num_experts,
+            noise_scala=script_args.router_jitter_noise,
+            slots_num=script_args.slots_num
         )
 
     return peft_config

@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollato
 from metric.acc import Accuracy
 from torchmetrics.text.perplexity import Perplexity
 
-from peft import MoELoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, MoVConfig, SoftLoraConfig, MoELoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 torch.set_float32_matmul_precision('medium')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -50,7 +50,8 @@ class ScriptArguments(TrainArguments):
         default=0.2, metadata={"help": "router_jitter_noise"})
     num_experts_per_token: Optional[int] = field(
         default=3, metadata={"help": "num_experts_per_token"})
-
+    slots_num: Optional[int] = field(
+        default=32, metadata={"help": "soft moe slots num"})
     max_length: Optional[int] = field(
         default=8192, metadata={"help": "max length for model input"})
 
@@ -67,6 +68,9 @@ class ScriptArguments(TrainArguments):
 
     adapter_name: Optional[str] = field(
         default='default', metadata={'help': "adapter name"})
+
+    adapter_type: Optional[str] = field(
+        default='moe_lora', metadata={'help': "adapter type"})
 
 
 @dataclass
@@ -110,18 +114,56 @@ def get_lora_config(script_args: ScriptArguments):
         modules = script_args.modules_to_save.split(',')
         if len(modules) == 1:
             modules = modules[0]
-    peft_config = MoELoraConfig(
-        r=script_args.lora_rank,
-        lora_alpha=script_args.lora_alpha,
-        lora_dropout=script_args.lora_dropout,
-        target_modules=targets,
-        modules_to_save=modules,
-        task_type="CAUSAL_LM",
-        bias='none',
-        router_jitter_noise=script_args.router_jitter_noise,
-        num_experts=script_args.num_experts,
-        num_experts_per_token=script_args.num_experts_per_token,
-    )
+
+    if script_args.adapter_type == 'moe_lora':
+        peft_config = MoELoraConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+            router_jitter_noise=script_args.router_jitter_noise,
+            num_experts=script_args.num_experts,
+            num_experts_per_token=script_args.num_experts_per_token,
+        )
+    elif script_args.adapter_type == 'lora':
+        peft_config = LoraConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+        )
+    elif script_args.adapter_type == 'mov':
+        peft_config = MoVConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+            router_jitter_noise=script_args.router_jitter_noise,
+            num_experts=script_args.num_experts,
+            num_experts_per_token=script_args.num_experts_per_token,
+        )
+    elif script_args.adapter_type == 'soft':
+        peft_config = SoftLoraConfig(
+            r=script_args.lora_rank,
+            lora_alpha=script_args.lora_alpha,
+            lora_dropout=script_args.lora_dropout,
+            target_modules=targets,
+            modules_to_save=modules,
+            task_type="CAUSAL_LM",
+            bias='none',
+            num_experts=script_args.num_experts,
+            noise_scala=script_args.router_jitter_noise,
+            slots_num=script_args.slots_num
+        )
 
     return peft_config
 
@@ -145,20 +187,13 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     if trainable:
         model.config.use_cache = False
     peft_config = get_lora_config(script_args)
-
     model = get_peft_model(
         model, peft_config, adapter_name=script_args.adapter_name)
     model.print_trainable_parameters()
     print(model)
-    model.config.num_experts = script_args.num_experts
-    model.config.router_jitter_noise = script_args.router_jitter_noise
-    model.config.num_experts_per_token = script_args.num_experts_per_token
     tokenizer, need_resize_embed = get_tokenizer(script_args)
     if need_resize_embed:
         model.resize_token_embeddings(len(tokenizer))
-
-    model.gradient_checkpointing_enable()
-    model.enable_input_require_grads()
     return model, tokenizer
 
 
