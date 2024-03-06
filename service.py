@@ -32,12 +32,13 @@ def load_model(peft_path: str):
         low_cpu_mem_usage=True,
         trust_remote_code=True,
         device_map='auto',
+        adapter_name='sft',
     ).eval()
     tokenizer = AutoTokenizer.from_pretrained(
         model_id,  trust_remote_code=True,)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
-    return peft_model, tokenizer
+    return torch.compile(peft_model), tokenizer
 
 
 @app.before_request

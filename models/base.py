@@ -66,7 +66,7 @@ class Base(LightningModule):
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
-    def loss(self, inputs, logists, stage='train', prog_bar=True):
+    def compute_loss(self, inputs, logists, stage='train', prog_bar=True):
         if self.hf_model:
             loss = logists.loss
         elif hasattr(self.model, "compute_loss"):
@@ -105,14 +105,14 @@ class Base(LightningModule):
         inputs = self.prepare_inputs(batch)
         logists = self.forward(**inputs)
         self.compute_metrics(inputs, logists)
-        loss = self.loss(inputs, logists)
+        loss = self.compute_loss(inputs, logists)
         return loss
 
     def validation_step(self, batch, batch_idx):
         inputs = self.prepare_inputs(batch)
         logists = self.forward(**inputs)
         self.compute_metrics(inputs, logists, stage='val')
-        loss = self.loss(inputs, logists, stage='val', prog_bar=True)
+        loss = self.compute_loss(inputs, logists, stage='val', prog_bar=True)
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -120,20 +120,16 @@ class Base(LightningModule):
         inputs = self.prepare_inputs(batch)
         logists = self.forward(**inputs)
         self.compute_metrics(inputs, logists, stage='test')
-        loss = self.loss(inputs, logists, stage='test', prog_bar=False)
+        loss = self.compute_loss(inputs, logists, stage='test', prog_bar=False)
         return loss
 
     def on_train_epoch_end(self):
         self.reset_metric()
 
     def on_validation_epoch_end(self):
-        if hasattr(self.model, 'metrics_reset'):
-            self.model.metrics_reset()
         self.reset_metric()
 
     def on_test_epoch_end(self):
-        if hasattr(self.model, 'metrics_reset'):
-            self.model.metrics_reset()
         self.reset_metric()
 
     def configure_optimizers(self):
