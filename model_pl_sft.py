@@ -39,6 +39,13 @@ def generate_prompt(data_point):
     return text
 
 
+def generate_prompt_v1(data):
+    template = """标题：{title}
+内容类别：{dataType}
+内容：{content}"""
+    return template.format(title=data['title'], dataType=data['dataType'], content=data['content'])
+
+
 @dataclass
 class ScriptArguments(TrainArguments):
     """

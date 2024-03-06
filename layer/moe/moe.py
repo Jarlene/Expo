@@ -28,7 +28,7 @@ class SoftMoE(nn.Module):
 
     def gumbel_noise(self, t: torch.Tensor):
         noise = torch.zeros_like(t).uniform_(0, 1)
-        return -self.log(-self.log(noise))
+        return -self.log(noise)
 
     def forward(self, hidden_states):
         slot_embeds = self.norm(self.slot_embeds)
