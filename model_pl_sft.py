@@ -168,7 +168,7 @@ def get_lora_config(script_args: ScriptArguments):
             task_type="CAUSAL_LM",
             bias='none',
             num_experts=script_args.num_experts,
-            noise_scala=script_args.router_jitter_noise,
+            router_jitter_noise=script_args.router_jitter_noise,
             slots_num=script_args.slots_num
         )
 
