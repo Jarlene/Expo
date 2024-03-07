@@ -42,6 +42,10 @@ class Base(LightningModule):
         for m in self.metrics:
             self.metrics.append(m.to(self.device))
 
+    def generate(self, *args, **kwargs):
+        if self.hf_model:
+            return self.model.generate(*args, **kwargs)
+
     def configure_model(self):
         self.print("configure_model")
         for m in self.metrics:
