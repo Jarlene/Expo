@@ -3,7 +3,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import math
 import torch
 import os
-from datasets import load_from_disk,load_dataset,DatasetDict
+from datasets import load_from_disk, load_dataset, DatasetDict
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollator, BitsAndBytesConfig
 from sklearn.metrics import accuracy_score
@@ -39,12 +39,10 @@ class HugeDataCollator(DefaultDataCollator):
 
     tokenizer: AutoTokenizer = None
     max_length: int = None
-    template = """标题：{title}
-内容类别：{dataType}
-内容：{content}"""
+    generate_func: Any = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [generate_prompt(d) for d in features]
+        contents = [self.generate_func(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -102,6 +100,11 @@ class ScriptArguments(TrainArguments):
         metadata={"help": "ssm model expand"}
     )
 
+    parallel: Optional[bool] = field(
+        default=True,
+        metadata={"help": "ssm model parallel expand"}
+    )
+
 
 def get_tokenizer(script_args: ScriptArguments):
     need_resize_embed = False
@@ -152,15 +155,24 @@ def generate_prompt(data_point):
     return text
 
 
-class MambaHook(torch.nn.Module):
+def generate_prompt_v1(data):
+    template = """标题：{title}
+内容类别：{dataType}
+内容：{content}"""
+    return template.format(title=data['title'], dataType=data['dataType'], content=data['content'])
 
-    def __init__(self, base_layer: torch.nn.Module, hidden_size, d_state, d_conv, expand, beta=1.0) -> None:
+
+class ModuleHook(torch.nn.Module):
+
+    def __init__(self, base_layer: torch.nn.Module, hidden_size, d_state, d_conv, expand, beta=1.0, is_parallel=True) -> None:
         super().__init__()
         self.base_layer = base_layer
         self.mamba = Mamba(dim=hidden_size, d_state=d_state,
                            d_conv=d_conv, expand=expand)
         self.mamba.requires_grad_(True)
+        self.norm = torch.nn.LayerNorm(hidden_size)
         self.beta = beta
+        self.is_parallel = is_parallel
 
     def forward(
             self,
@@ -171,10 +183,19 @@ class MambaHook(torch.nn.Module):
             output_attentions: Optional[bool] = False,
             use_cache: Optional[bool] = False,
             **kwargs) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-        res = self.mamba(hidden_states)
-        result = self.base_layer(hidden_states=res, attention_mask=attention_mask,
-                                 position_ids=position_ids, past_key_value=past_key_value,
-                                 output_attentions=output_attentions, use_cache=use_cache, **kwargs)
+        if not self.is_parallel:
+            hidden_states = self.mamba(self.norm(hidden_states))*self.beta
+            result = self.base_layer(hidden_states=hidden_states, attention_mask=attention_mask,
+                                     position_ids=position_ids, past_key_value=past_key_value,
+                                     output_attentions=output_attentions, use_cache=use_cache, **kwargs)
+        else:
+            res = self.mamba(self.norm(hidden_states)) * self.beta
+            result = self.base_layer(hidden_states=hidden_states, attention_mask=attention_mask,
+                                     position_ids=position_ids, past_key_value=past_key_value,
+                                     output_attentions=output_attentions, use_cache=use_cache, **kwargs)
+            ss = list(result)
+            ss[0] += self.beta * res
+            result = tuple(ss)
         return result
 
 
@@ -191,17 +212,17 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(
+        model, use_gradient_checkpointing=True)
     if trainable:
         model.config.use_cache = False
     tokenizer, need_resize_embed = get_tokenizer(script_args)
     if need_resize_embed:
         model.resize_token_embeddings(len(tokenizer))
-
     for idx, child in enumerate(model.model.layers):
         if idx % 2 == 0:
-            new_child = MambaHook(child, model.config.hidden_size, script_args.d_state,
-                                  script_args.d_conv, script_args.expand, beta=script_args.beta)
+            new_child = ModuleHook(child, model.config.hidden_size, script_args.d_state,
+                                   script_args.d_conv, script_args.expand, beta=script_args.beta, is_parallel=script_args.parallel)
         else:
             new_child = child
         model.model.layers[idx] = new_child
