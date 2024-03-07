@@ -75,7 +75,9 @@ if __name__ == "__main__":
             num_fewshot=0,
             device=device,
             batch_size=16,
+            cache_requests=True,
             write_out=True,
+            gen_kwargs='temperature=0.7,do_sample=True,top_p=0.7,repetition_penalty=1.1',
             task_manager=lm_eval.tasks.TaskManager(),)
 
         print(make_table(results))
