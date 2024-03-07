@@ -170,6 +170,7 @@ class ModuleHook(torch.nn.Module):
         self.mamba = Mamba(dim=hidden_size, d_state=d_state,
                            d_conv=d_conv, expand=expand)
         self.mamba.requires_grad_(True)
+        self.base_layer.requires_grad_(False)
         self.norm = torch.nn.LayerNorm(hidden_size)
         self.beta = beta
         self.is_parallel = is_parallel
@@ -238,7 +239,7 @@ def main():
     train_dataset, eval_dataset = get_data(script_args)
     model, tokenizer = get_model_and_tokenizer(script_args, trainable=True)
     data_collator = HugeDataCollator(
-        tokenizer=tokenizer, max_length=script_args.max_length)
+        tokenizer=tokenizer, max_length=script_args.max_length, generate_func=generate_prompt)
     trainer = get_trainer(
         args=script_args,
         train_dataset=train_dataset,
