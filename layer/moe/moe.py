@@ -8,37 +8,39 @@ from ..layers import RMSNorm
 
 
 class SoftMoE(nn.Module):
-    def __init__(self, dim,
-                 expers_num,
-                 slots_num,
+    def __init__(self, hidden_size,
+                 num_experts,
+                 num_slots,
                  expert: nn.Module,
-                 add_noise=True,
-                 noise_scala=1.0) -> Any:
+                 router_jitter_noise: float = 0.2) -> Any:
         super().__init__()
-        self.norm = RMSNorm(dim)
+        self.norm = RMSNorm(hidden_size)
         self.slot_embeds = nn.Parameter(
-            torch.rand((expers_num, slots_num, dim)))
+            torch.rand((num_experts, num_slots, hidden_size)))
         self.experts = nn.ModuleList([copy.deepcopy(expert).requires_grad_(True)
-                                     for _ in range(expers_num)])
-        self.add_noise = add_noise
-        self.noise_scala = noise_scala
+                                     for _ in range(num_experts)])
+        self.router_jitter_noise = router_jitter_noise
 
-    def log(self, t: torch.Tensor, eps=1e-20):
-        return torch.log(t.clamp(min=eps))
+    def add_noise(self, hidden_states, training: bool = False) -> torch.Tensor:
+        if self.router_jitter_noise > 0 and training:
 
-    def gumbel_noise(self, t: torch.Tensor):
-        noise = torch.zeros_like(t).uniform_(0, 1)
-        return -self.log(noise)
+            distrib_lower_bound = 1.0 - self.router_jitter_noise
+            distrib_upper_bound = 1.0 + self.router_jitter_noise
+
+            uniform_distrib = torch.rand(
+                hidden_states.shape, device=hidden_states.device, dtype=hidden_states.dtype, requires_grad=False)
+            uniform_distrib = uniform_distrib * \
+                (distrib_lower_bound - distrib_upper_bound)
+
+            uniform_distrib = uniform_distrib + distrib_upper_bound
+            # Multiply the token inputs by the uniform distribution - adding some noise
+            hidden_states = hidden_states * uniform_distrib
+        return hidden_states
 
     def forward(self, hidden_states):
         slot_embeds = self.norm(self.slot_embeds)
-        logits = torch.einsum(
-            'bnd,esd->bnes', hidden_states, slot_embeds)
-
-        if self.add_noise and self.training:
-            noise = self.gumbel_noise(logits) * self.noise_scala
-            logits = logits + noise
-
+        logits = torch.einsum('bnd,esd->bnes', hidden_states, slot_embeds)
+        logits = self.add_noise(logits, self.training)
         dispatch_weights = logits.softmax(dim=1)
         combine_weights = logits.softmax(dim=-1)
         slots = torch.einsum('bnd,bnes->besd', hidden_states, dispatch_weights)

@@ -9,8 +9,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DefaultDataCollato
 from sklearn.metrics import accuracy_score
 from utils.utils import get_train_args, TrainArguments
 from trainer.trainer import get_trainer
-from layer.moe.moe import DroplessMoE
+from layer.moe.moe import DroplessMoE, SoftMoE
 from peft import prepare_model_for_kbit_training
+import copy
 
 torch.set_float32_matmul_precision('medium')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -39,12 +40,10 @@ class HugeDataCollator(DefaultDataCollator):
 
     tokenizer: AutoTokenizer = None
     max_length: int = None
-    template = """标题：{title}
-内容类别：{dataType}
-内容：{content}"""
+    generate_func: Any = None
 
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        contents = [generate_prompt(d) for d in features]
+        contents = [self.generate_func(d) for d in features]
         output = self.tokenizer(contents,
                                 padding='longest',
                                 truncation=True,
@@ -81,16 +80,31 @@ class ScriptArguments(TrainArguments):
     max_length: Optional[int] = field(
         default=8192, metadata={"help": "max length for model input"})
 
+    use_soft_moe: Optional[bool] = field(
+        default=True, metadata={"help": "use soft moe"}
+    )
     num_experts: Optional[int] = field(
-        default=0, metadata={"help": "the num of experts"})
+        default=3, metadata={"help": "the num of experts"})
     router_jitter_noise: Optional[float] = field(
         default=0.2, metadata={"help": "router_jitter_noise"})
+
     num_experts_per_token: Optional[int] = field(
-        default=3, metadata={"help": "num_experts_per_token"})
+        default=1, metadata={"help": "num_experts_per_token"})
+
+    num_slots: Optional[int] = field(
+        default=16, metadata={"help": "soft moe for slots num"})
+
     beta: Optional[float] = field(
         default=1.0,
         metadata={"help": "ssm model expand"}
     )
+
+    lora_alpha: Optional[float] = field(
+        default=16, metadata={"help": "the lora alpha parameter"})
+    lora_dropout: Optional[float] = field(
+        default=0.05, metadata={"help": "the lora dropout parameter"})
+    lora_rank: Optional[int] = field(
+        default=8, metadata={"help": "the lora r parameter"})
 
 
 def get_tokenizer(script_args: ScriptArguments):
@@ -142,31 +156,51 @@ def generate_prompt(data_point):
     return text
 
 
+class LoRABlock(torch.nn.Module):
+    def __init__(self, hidden_size, rank, lora_alpha, lora_dropout) -> None:
+        super().__init__()
+        self.loar_A = torch.nn.Linear(hidden_size, rank, bias=False)
+        self.loar_B = torch.nn.Linear(rank, hidden_size, bias=False)
+        self.scaling = lora_alpha / rank
+        self.lora_dropout = torch.nn.Dropout(p=lora_dropout)
+
+    def forward(self, hidden_states):
+        x = self.lora_dropout(hidden_states)
+        x = self.loar_A(x)
+        x = self.loar_B(x)
+        return x * self.scaling
+
+
 class MoEHook(torch.nn.Module):
 
-    def __init__(self, base_layer: torch.nn.Module, hidden_size, num_experts, moe_num_experts_per_token, router_jitter_noise, beta=1.0) -> None:
+    def __init__(self, base_layer: torch.nn.Module, hidden_size,
+                 script_args: ScriptArguments) -> None:
         super().__init__()
+        base_layer.requires_grad_(False)
         self.base_layer = base_layer
-        self.moe = DroplessMoE(hidden_size=hidden_size, num_experts=num_experts,
-                               moe_num_experts_per_token=moe_num_experts_per_token,
-                               router_jitter_noise=router_jitter_noise, expert=base_layer)
-        self.moe.requires_grad_(True)
-        self.beta = beta
+        self.base_layer.requires_grad_(False)
+        if script_args.use_soft_moe:
+            self.moe = SoftMoE(
+                hidden_size=hidden_size,
+                num_experts=script_args.num_experts,
+                num_slots=script_args.num_slots,
+                router_jitter_noise=script_args.router_jitter_noise,
+                expert=base_layer)
+        else:
+            self.moe = DroplessMoE(hidden_size=hidden_size, num_experts=script_args.num_experts,
+                                   num_experts_per_token=script_args.num_experts_per_token,
+                                   router_jitter_noise=script_args.router_jitter_noise,
+                                   expert=base_layer)
+        self.beta = script_args.beta
+        self.use_soft_moe = script_args.use_soft_moe
 
-    def forward(
-            self,
-            hidden_states: torch.Tensor,
-            attention_mask: Optional[torch.Tensor] = None,
-            position_ids: Optional[torch.LongTensor] = None,
-            past_key_value: Optional[Tuple[torch.Tensor]] = None,
-            output_attentions: Optional[bool] = False,
-            use_cache: Optional[bool] = False,
-            **kwargs) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-        result = self.base_layer(hidden_states=hidden_states, attention_mask=attention_mask,
-                                 position_ids=position_ids, past_key_value=past_key_value,
-                                 output_attentions=output_attentions, use_cache=use_cache, **kwargs)
-        res = self.moe(hidden_states)
-        return result + self.beta*res
+    def forward(self, x: torch.Tensor):
+        result = self.base_layer(x)
+        if self.use_soft_moe:
+            domain = self.moe(x)
+        else:
+            domain, _, _ = self.moe(x)
+        return result + self.beta * domain
 
 
 def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
@@ -191,18 +225,19 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
         model.resize_token_embeddings(len(tokenizer))
 
     for idx, child in enumerate(model.model.layers):
-        if idx % 2 == 1:
-            new_child = MoEHook(child, model.config.hidden_size, num_experts=script_args.num_experts,
-                                moe_num_experts_per_token=script_args.num_experts_per_token,
-                                router_jitter_noise=script_args.router_jitter_noise,
-                                beta=script_args.beta)
+        base_layer = child.mlp
+        if idx % 2 == 0:
+            child.mlp = MoEHook(
+                base_layer, model.config.hidden_size, script_args)
         else:
-            new_child = child
-        model.model.layers[idx] = new_child
+            child.mlp = base_layer
     print(model)
     model.config.num_experts = script_args.num_experts
     model.config.num_experts_per_token = script_args.num_experts_per_token
     model.config.router_jitter_noise = script_args.router_jitter_noise
+    model.config.beta = script_args.beta
+    model.config.use_soft_moe = script_args.use_soft_moe
+    model.config.num_slots = script_args.num_slots
     return model, tokenizer
 
 
@@ -211,7 +246,7 @@ def main():
     train_dataset, eval_dataset = get_data(script_args)
     model, tokenizer = get_model_and_tokenizer(script_args, trainable=True)
     data_collator = HugeDataCollator(
-        tokenizer=tokenizer, max_length=script_args.max_length)
+        tokenizer=tokenizer, max_length=script_args.max_length, generate_func=generate_prompt)
     trainer = get_trainer(
         args=script_args,
         train_dataset=train_dataset,

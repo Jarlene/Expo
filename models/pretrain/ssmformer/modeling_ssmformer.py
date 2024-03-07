@@ -287,7 +287,7 @@ class DecoderLayer(nn.Module):
                        d_conv=config.d_conv, expand=config.expand)
         if is_moe:
             if config.moe_soft:
-                self.mlp = SoftMoE(dim=config.hidden_size, slots_num=config.moe_num_slots,
+                self.mlp = SoftMoE(hidden_size=config.hidden_size, num_slots=config.moe_num_slots,
                                    expert=expert, add_noise=True, num_experts=config.moe_num_experts,
                                    noise_scala=config.moe_noise_mult)
             else:
