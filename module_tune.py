@@ -164,7 +164,7 @@ def generate_prompt_v1(data):
 
 class ModuleHook(torch.nn.Module):
 
-    def __init__(self, base_layer: torch.nn.Module, hidden_size, d_state, d_conv, expand, beta=1.0, is_parallel=True) -> None:
+    def __init__(self, base_layer: torch.nn.Module, hidden_size, d_state, d_conv, expand, is_parallel=True) -> None:
         super().__init__()
         self.base_layer = base_layer
         self.mamba = Mamba(dim=hidden_size, d_state=d_state,
@@ -172,8 +172,8 @@ class ModuleHook(torch.nn.Module):
         self.mamba.requires_grad_(True)
         self.base_layer.requires_grad_(False)
         self.norm = torch.nn.LayerNorm(hidden_size)
-        self.beta = beta
         self.is_parallel = is_parallel
+        self.beta = torch.nn.Parameter(torch.tensor(1.0))
 
     def forward(
             self,
@@ -195,7 +195,7 @@ class ModuleHook(torch.nn.Module):
                                      position_ids=position_ids, past_key_value=past_key_value,
                                      output_attentions=output_attentions, use_cache=use_cache, **kwargs)
             ss = list(result)
-            ss[0] += self.beta * res
+            ss[0] += res
             result = tuple(ss)
         return result
 
@@ -223,7 +223,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     for idx, child in enumerate(model.model.layers):
         if idx % 2 == 0:
             new_child = ModuleHook(child, model.config.hidden_size, script_args.d_state,
-                                   script_args.d_conv, script_args.expand, beta=script_args.beta, is_parallel=script_args.parallel)
+                                   script_args.d_conv, script_args.expand, is_parallel=script_args.parallel)
         else:
             new_child = child
         model.model.layers[idx] = new_child
