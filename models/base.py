@@ -12,6 +12,7 @@ from lightning.pytorch.core import LightningModule
 from deepspeed.ops.adam import FusedAdam, DeepSpeedCPUAdam
 from torchmetrics import Metric
 from utils.utils import TrainArguments
+from dataclasses import asdict
 
 
 class Base(LightningModule):
@@ -22,7 +23,7 @@ class Base(LightningModule):
                  args: TrainArguments,
                  metrics: Optional[Union[Metric, List[Metric]]] = None, **kwargs) -> None:
         super(Base, self).__init__(**kwargs)
-        self.save_hyperparameters(args.__dict__)
+        self.save_hyperparameters(asdict(args))
         self.model = model
         self.tokenizer = tokenizer
         self.args = args

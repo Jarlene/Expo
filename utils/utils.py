@@ -1,4 +1,5 @@
 from argparse import Namespace
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Union, Optional, TypeVar
 from transformers import HfArgumentParser
@@ -51,7 +52,7 @@ class TrainArguments(Namespace):
     strategy: Optional[str] = field(
         default='auto',
         metadata={"help": "use lightning training model strategy"})
-    
+
     num_nodes: Optional[int] = field(
         default=1,
         metadata={"help": "use lightning training model num nodes"})
@@ -108,13 +109,22 @@ class TrainArguments(Namespace):
     tokenizer_path: str = field(
         default=None,
         metadata={"help": "tokenizer path"})
-    model_name_or_path:str = field(
+    model_name_or_path: str = field(
         default=None,
         metadata={"help": "the location of the model name or path"},
     )
     quantizer: Optional[bool] = field(default=None,
                                       metadata={
                                           "help": "load model quantizer"})
+
+
+def dataclass_from_dict(klass, d):
+    try:
+        fieldtypes = {f.name: f.type for f in dataclasses.fields(klass)}
+        return klass(**{f: dataclass_from_dict(fieldtypes[f], d[f]) for f in d})
+    except:
+        return d  # Not a dataclass field
+
 
 def get_train_args(clazz: Optional[T] = None) -> Union[TrainArguments, T]:
     if clazz is None:
