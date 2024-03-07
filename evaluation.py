@@ -17,7 +17,7 @@ def _handle_non_serializable(o):
         return str(o)
 
 
-def get_peft_model(peft_path: str, device: str):
+def get_peft_model(peft_path: str, device: str, batch_size=128):
     config = PeftConfig.from_pretrained(peft_path)
     model_id = config.base_model_name_or_path
     model = AutoModelForCausalLM.from_pretrained(
@@ -39,11 +39,11 @@ def get_peft_model(peft_path: str, device: str):
         tokenizer.pad_token = tokenizer.eos_token
     print(peft_model)
     lm = HFLM(pretrained=peft_model, tokenizer=tokenizer,
-              batch_size=16, trust_remote_code=True)
+              batch_size=batch_size, trust_remote_code=True)
     return lm
 
 
-def get_model(model_path: str, device: str):
+def get_model(model_path: str, device: str, batch_size=128):
 
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -55,26 +55,26 @@ def get_model(model_path: str, device: str):
         model_path,  trust_remote_code=True,)
     print(model)
     lm = HFLM(pretrained=model, tokenizer=tokenizer,
-              batch_size=16, trust_remote_code=True)
+              batch_size=batch_size, trust_remote_code=True)
     return lm
 
 
 if __name__ == "__main__":
     eval_models = {
-        'soft_lora': '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v22/checkpoint-1500/sft',
-        'moe_lora': '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v7/checkpoint-200/sft',
         'lora': '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v5/checkpoint-100/sft',
-        'mov': '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v8/checkpoint-5300/sft'
+        'moe_lora': '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v7/checkpoint-100/sft',
+        'soft_lora': '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v22/checkpoint-1500/sft',
     }
     device = 'cuda:0'
+    batch_size = 256
     for model_type, peft_path in eval_models.items():
-        lm = get_peft_model(peft_path, device=device)
+        lm = get_peft_model(peft_path, device=device, batch_size=batch_size)
         results = lm_eval.simple_evaluate(
             model=lm,
             tasks=["mmlu", "gsm8k", "triviaqa"],
             num_fewshot=0,
             device=device,
-            batch_size=16,
+            batch_size=batch_size,
             cache_requests=True,
             write_out=True,
             gen_kwargs='temperature=0.7,do_sample=True,top_p=0.7,repetition_penalty=1.1',
