@@ -7,7 +7,7 @@ from typing import List, Dict
 
 from peft import PeftConfig, PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
+from models.base import Base
 app = Flask(__name__)
 
 generator: AutoModelForCausalLM = None
@@ -16,7 +16,7 @@ tokenizer: AutoTokenizer = None
 os.environ['CUDA_VISIBLE_DEVICES'] = '2,3'
 
 
-def load_model(peft_path: str):
+def load_hf_model(peft_path: str):
     config = PeftConfig.from_pretrained(peft_path)
     model_id = config.base_model_name_or_path
     model = AutoModelForCausalLM.from_pretrained(
@@ -38,15 +38,32 @@ def load_model(peft_path: str):
         model_id,  trust_remote_code=True,)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+    peft_model.generate = model.generate
     return torch.compile(peft_model), tokenizer
+
+
+def load_pl_model(path: str, tokenizer_path: str):
+    if os.path.isdir(path):
+        import sys
+        sys.path.append(path)
+        from .zero_to_fp32 import convert_zero_checkpoint_to_fp32_state_dict
+        model_path = os.path.join(path, 'model.ckpt')
+        convert_zero_checkpoint_to_fp32_state_dict(path, model_path)
+    else:
+        model_path = path
+    model = Base.load_from_checkpoint(model_path).eval()
+    tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer_path,  trust_remote_code=True)
+    return model, tokenizer
 
 
 @app.before_request
 def prepare():
     global generator, tokenizer
     if not generator:
-        peft_path = '/home/work/xiongwenlong/models/Expo/output/hf/Mistral-7B-Instruct/v1/checkpoint-200'
-        generator, tokenizer = load_model(peft_path)
+        peft_path = '/home/work/xiongwenlong/models/Expo/output/pl/Mistral-7B-Instruct/v9/epoch=0-step=400.ckpt'
+        tokenizer_path = '/home/work/xiongwenlong/models/Mistral-7B-Instruct/'
+        generator, tokenizer = load_pl_model(peft_path, tokenizer_path)
 
 
 def generate(messages: List[List[Dict]], temperature=0.5, max_new_tokens=4096, top_p=0.7, repetition_penalty=1.0):
@@ -97,9 +114,9 @@ def gen():
     messages = data['messages']
     temperature = data.get('temperature', 0.3)
     top_p = data.get('top_p', 0.85)
-    max_new_tokens = data.get('max_new_tokens', 4096)
-
-    output = generate(messages, temperature=temperature,
+    max_new_tokens = data.get('max_new_tokens', 1024)
+    repetition_penalty = data.get('repetition_penalty', 1.1)
+    output = generate(messages, temperature=temperature, repetition_penalty=repetition_penalty,
                       top_p=top_p, max_new_tokens=max_new_tokens)
 
     res = {'choices': [{'message': {'content': output}}], 'status': 200}
