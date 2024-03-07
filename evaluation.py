@@ -86,5 +86,5 @@ if __name__ == "__main__":
         dumped = json.dumps(
             results, indent=2, default=_handle_non_serializable, ensure_ascii=False
         )
-        with open("results.json", 'w', encoding='utf-8') as f:
+        with open(model_type+"_results.json", 'w', encoding='utf-8') as f:
             f.write(dumped)
