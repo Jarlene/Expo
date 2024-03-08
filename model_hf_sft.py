@@ -142,16 +142,19 @@ class ScriptArguments(TrainingArguments):
     adapter_type: Optional[str] = field(
         default='moe_lora', metadata={'help': "adapter type"})
 
+    padding_side: Optional[str] = field(
+        default='left', metadata={'help': "tokenizer padding side"})
+
 
 def get_tokenizer(script_args: ScriptArguments):
     need_resize_embed = False
     if script_args.tokenizer_path:
         tokenizer = AutoTokenizer.from_pretrained(
-            script_args.tokenizer_path, padding_side="left", trust_remote_code=True)
+            script_args.tokenizer_path, padding_side=script_args.padding_side, trust_remote_code=True)
         need_resize_embed = True
     else:
         tokenizer = AutoTokenizer.from_pretrained(
-            script_args.model_name_or_path, padding_side="left", trust_remote_code=True)
+            script_args.model_name_or_path, padding_side=script_args.padding_side, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer, need_resize_embed
