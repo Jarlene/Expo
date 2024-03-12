@@ -133,6 +133,7 @@ def get_lora_config(script_args: ScriptArguments):
             modules_to_save=modules,
             task_type="CAUSAL_LM",
             bias='none',
+            use_rslora=True,
             router_jitter_noise=script_args.router_jitter_noise,
             num_experts=script_args.num_experts,
             num_experts_per_token=script_args.num_experts_per_token,
@@ -146,6 +147,7 @@ def get_lora_config(script_args: ScriptArguments):
             modules_to_save=modules,
             task_type="CAUSAL_LM",
             bias='none',
+            use_rslora=True,
         )
     elif script_args.adapter_type == 'mov':
         peft_config = MoVConfig(
@@ -156,6 +158,7 @@ def get_lora_config(script_args: ScriptArguments):
             modules_to_save=modules,
             task_type="CAUSAL_LM",
             bias='none',
+            use_rslora=True,
             router_jitter_noise=script_args.router_jitter_noise,
             num_experts=script_args.num_experts,
             num_experts_per_token=script_args.num_experts_per_token,
@@ -169,6 +172,7 @@ def get_lora_config(script_args: ScriptArguments):
             modules_to_save=modules,
             task_type="CAUSAL_LM",
             bias='none',
+            use_rslora=True,
             num_experts=script_args.num_experts,
             router_jitter_noise=script_args.router_jitter_noise,
             slots_num=script_args.slots_num
