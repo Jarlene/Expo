@@ -11,7 +11,7 @@ from utils.utils import get_train_args, TrainArguments
 from trainer.trainer import get_trainer
 from layer.ssm import Mamba
 from peft import prepare_model_for_kbit_training
-
+import copy
 torch.set_float32_matmul_precision('medium')
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -164,12 +164,13 @@ def generate_prompt_v1(data):
 
 class ModuleHook(torch.nn.Module):
 
-    def __init__(self, base_layer: torch.nn.Module, hidden_size, d_state, d_conv, expand, is_parallel=True) -> None:
+    def __init__(self, base_layer: torch.nn.Module, hidden_size, is_parallel=True, target: torch.nn.Module = None) -> None:
         super().__init__()
         self.base_layer = base_layer
-        self.mamba = Mamba(dim=hidden_size, d_state=d_state,
-                           d_conv=d_conv, expand=expand)
-        self.mamba.requires_grad_(True)
+        self.target = target
+        if self.target is None:
+            self.target = copy.deepcopy(base_layer)
+        self.target.requires_grad_(True)
         self.base_layer.requires_grad_(False)
         self.norm = torch.nn.LayerNorm(hidden_size)
         self.is_parallel = is_parallel
@@ -185,12 +186,12 @@ class ModuleHook(torch.nn.Module):
             use_cache: Optional[bool] = False,
             **kwargs) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         if not self.is_parallel:
-            hidden_states = self.mamba(self.norm(hidden_states))*self.beta
+            hidden_states = self.target(self.norm(hidden_states))*self.beta
             result = self.base_layer(hidden_states=hidden_states, attention_mask=attention_mask,
                                      position_ids=position_ids, past_key_value=past_key_value,
                                      output_attentions=output_attentions, use_cache=use_cache, **kwargs)
         else:
-            res = self.mamba(self.norm(hidden_states)) * self.beta
+            res = self.target(self.norm(hidden_states)) * self.beta
             result = self.base_layer(hidden_states=hidden_states, attention_mask=attention_mask,
                                      position_ids=position_ids, past_key_value=past_key_value,
                                      output_attentions=output_attentions, use_cache=use_cache, **kwargs)
@@ -220,10 +221,12 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     tokenizer, need_resize_embed = get_tokenizer(script_args)
     if need_resize_embed:
         model.resize_token_embeddings(len(tokenizer))
+    target = Mamba(dim=model.config.hidden_size, d_conv=script_args.d_conv,
+                   d_state=script_args.d_state, expand=script_args.expand)
     for idx, child in enumerate(model.model.layers):
         if idx % 2 == 0:
-            new_child = ModuleHook(child, model.config.hidden_size, script_args.d_state,
-                                   script_args.d_conv, script_args.expand, is_parallel=script_args.parallel)
+            new_child = ModuleHook(
+                child, model.config.hidden_size, target=target, is_parallel=script_args.parallel)
         else:
             new_child = child
         model.model.layers[idx] = new_child
@@ -231,6 +234,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     model.config.d_state = script_args.d_state
     model.config.d_conv = script_args.d_conv
     model.config.expand = script_args.expand
+    model.config.is_parallel = script_args.parallel
     return model, tokenizer
 
 
