@@ -27,6 +27,7 @@ class ScriptArguments(TrainArguments):
     )
 
     tasks: str = field(
+        default=None,
         metadata={'help': 'evalution task names, split with `,`'}
     )
 
@@ -162,11 +163,9 @@ def eval():
         script_args.save_dir = f"./"
     tasks = script_args.tasks.split(',')
     try:
-        lm = get_peft_model(script_args.model_name_or_path,
-                            device=script_args.devices, batch_size=script_args.batch_size)
+        lm = get_peft_model(script_args)
     except Exception as e:
-        lm = get_model(script_args.model_name_or_path,
-                       device=script_args.devices, batch_size=script_args.batch_size)
+        lm = get_model(script_args)
 
     if lm is None:
         raise ValueError("lm is None")
