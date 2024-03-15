@@ -105,6 +105,7 @@ def get_peft_model(script_args: ScriptArguments):
         low_cpu_mem_usage=True,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
+        device_map='auto',
     ).eval()
     peft_model = PeftModel.from_pretrained(
         model,
@@ -147,6 +148,7 @@ def get_model(script_args: ScriptArguments):
         trust_remote_code=True,
         quantization_config=bnb_config if script_args.quantizer else None,
         torch_dtype=torch.bfloat16,
+        device_map='auto',
     ).eval()
     tokenizer = AutoTokenizer.from_pretrained(
         script_args.model_name_or_path,
