@@ -97,7 +97,6 @@ def get_peft_model(script_args: ScriptArguments):
         bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_use_double_quant=True,
     )
-
     config = PeftConfig.from_pretrained(script_args.model_name_or_path)
     model_id = config.base_model_name_or_path
     model = AutoModelForCausalLM.from_pretrained(
@@ -106,14 +105,14 @@ def get_peft_model(script_args: ScriptArguments):
         low_cpu_mem_usage=True,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-    ).to(script_args.devices)
+    ).eval()
     peft_model = PeftModel.from_pretrained(
         model,
         script_args.model_name_or_path,
         low_cpu_mem_usage=True,
         trust_remote_code=True,
         adapter_name=script_args.adapter_name,
-    ).eval().to(script_args.devices)
+    ).eval()
     tokenizer = AutoTokenizer.from_pretrained(
         model_id,  trust_remote_code=True,)
     if tokenizer.pad_token is None:
@@ -148,7 +147,7 @@ def get_model(script_args: ScriptArguments):
         trust_remote_code=True,
         quantization_config=bnb_config if script_args.quantizer else None,
         torch_dtype=torch.bfloat16,
-    ).to(script_args.devices)
+    ).eval()
     tokenizer = AutoTokenizer.from_pretrained(
         script_args.model_name_or_path,
         trust_remote_code=True,
@@ -165,6 +164,7 @@ def get_model(script_args: ScriptArguments):
 
 def eval():
     script_args = get_train_args(ScriptArguments)
+    os.environ["CUDA_VISIBLE_DEVICES"] = script_args.devices
     if script_args.save_dir is None:
         script_args.save_dir = f"./"
     tasks = script_args.tasks.split(',')
