@@ -16,15 +16,6 @@ import os
 @dataclass
 class ScriptArguments(TrainArguments):
 
-    model_name_or_path: str = field(
-        metadata={"help": "the location of the SFT model name or path"},
-
-    )
-    tokenizer_path: str = field(
-        default=None,
-        metadata={"help": "tokenizer path"}
-    )
-
     save_dir: str = field(
         default=None,
         metadata={"help": "result save dir"}
@@ -36,7 +27,7 @@ class ScriptArguments(TrainArguments):
     )
 
     tasks: str = field(
-        metadata={'help', 'evalution task names, split with `,`'}
+        metadata={'help': 'evalution task names, split with `,`'}
     )
 
     cache_requests: Optional[bool] = field(
