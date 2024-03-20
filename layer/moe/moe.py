@@ -37,12 +37,29 @@ class SoftMoE(nn.Module):
             hidden_states = hidden_states * uniform_distrib
         return hidden_states
 
+    def softmax(self, x: torch.Tensor, dim: int | tuple[int, ...]) -> torch.Tensor:
+        """
+        Compute the softmax along the specified dimensions.
+        This function adds the option to specify multiple dimensions
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            dims (int or tuple[int]): The dimension or list of dimensions along which the softmax probabilities are computed.
+
+        Returns:
+            torch.Tensor: Output tensor containing softmax probabilities along the specified dimensions.
+        """
+        max_vals = torch.amax(x, dim=dim, keepdim=True)
+        e_x = torch.exp(x - max_vals)
+        sum_exp = e_x.sum(dim=dim, keepdim=True)
+        return e_x / sum_exp
+
     def forward(self, hidden_states):
         slot_embeds = self.norm(self.slot_embeds)
         logits = torch.einsum('bnd,esd->bnes', hidden_states, slot_embeds)
         logits = self.add_noise(logits, self.training)
-        dispatch_weights = logits.softmax(dim=1)
-        combine_weights = logits.softmax(dim=-1)
+        dispatch_weights = self.softmax(logits, dim=1)
+        combine_weights = self.softmax(logits, dim=(2, 3))
         slots = torch.einsum('bnd,bnes->besd', hidden_states, dispatch_weights)
         outs = []
         for idx, expert in enumerate(self.experts):
