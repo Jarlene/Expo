@@ -104,17 +104,23 @@ class ScriptArguments(TrainArguments):
         default=True,
         metadata={"help": "ssm model parallel expand"}
     )
+    split_num: Optional[int] = field(
+        default=4,
+        metadata={"help": "split_num"}
+    )
+    padding_side: Optional[str] = field(
+        default='left', metadata={'help': "tokenizer padding side"})
 
 
 def get_tokenizer(script_args: ScriptArguments):
     need_resize_embed = False
     if script_args.tokenizer_path:
         tokenizer = AutoTokenizer.from_pretrained(
-            script_args.tokenizer_path, padding_side="left", trust_remote_code=True)
+            script_args.tokenizer_path, padding_side=script_args.padding_side, trust_remote_code=True)
         need_resize_embed = True
     else:
         tokenizer = AutoTokenizer.from_pretrained(
-            script_args.model_name_or_path, padding_side="left", trust_remote_code=True)
+            script_args.model_name_or_path, padding_side=script_args.padding_side, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer, need_resize_embed
@@ -231,7 +237,7 @@ def get_model_and_tokenizer(script_args: ScriptArguments, trainable=False):
     target = Mamba(dim=model.config.hidden_size, d_conv=script_args.d_conv,
                    d_state=script_args.d_state, expand=script_args.expand)
     for idx, child in enumerate(model.model.layers):
-        if idx % 2 == 0:
+        if idx % script_args.split_num == 0:
             new_child = ModuleHook(
                 child, model.config.hidden_size, target=target, is_parallel=script_args.parallel)
         else:
