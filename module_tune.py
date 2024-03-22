@@ -187,8 +187,7 @@ class ModuleHook(torch.nn.Module):
             **kwargs) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         if not self.is_parallel:
             if type(self.target) == type(self.base_layer):
-                hidden_states = self.target(
-                    self.norm(hidden_states))[0]*self.beta
+                hidden_states = self.target(hidden_states)[0]*self.beta
             else:
                 hidden_states = self.target(
                     self.norm(hidden_states)) * self.beta
@@ -197,7 +196,7 @@ class ModuleHook(torch.nn.Module):
                                      output_attentions=output_attentions, use_cache=use_cache, **kwargs)
         else:
             if type(self.target) == type(self.base_layer):
-                res = self.target(self.norm(hidden_states))[0]*self.beta
+                res = self.target(hidden_states)[0]*self.beta
             else:
                 res = self.target(self.norm(hidden_states)) * self.beta
             result = self.base_layer(hidden_states=hidden_states, attention_mask=attention_mask,
